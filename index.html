@@ -86,6 +86,45 @@
     const UNITS      = ["oz","lb","g","kg","each"];
     const BUDGET     = { male: 72.20, female: 57.50 };
 
+    /* FDA Daily Values (2,000 kcal diet) — grouped for display, flat for calculations */
+    const NUTRIENT_GROUPS = [
+      { label:"Macronutrients", nutrients:[
+        { key:"calories", name:"Energy",                       label:"Calories",      unit:"kcal", rda:2000  },
+        { key:"protein",  name:"Protein",                      label:"Protein",       unit:"g",    rda:50    },
+        { key:"fat",      name:"Total lipid (fat)",            label:"Total Fat",     unit:"g",    rda:78    },
+        { key:"carbs",    name:"Carbohydrate, by difference",  label:"Carbohydrates", unit:"g",    rda:275   },
+        { key:"fiber",    name:"Fiber, total dietary",         label:"Fiber",         unit:"g",    rda:28    },
+        { key:"sodium",   name:"Sodium, Na",                   label:"Sodium",        unit:"mg",   rda:2300  },
+      ]},
+      { label:"Fat-Soluble Vitamins", nutrients:[
+        { key:"vitA", name:"Vitamin A, RAE",                   label:"Vitamin A",     unit:"µg",   rda:900   },
+        { key:"vitD", name:"Vitamin D (D2 + D3)",              label:"Vitamin D",     unit:"µg",   rda:20    },
+        { key:"vitE", name:"Vitamin E (alpha-tocopherol)",     label:"Vitamin E",     unit:"mg",   rda:15    },
+        { key:"vitK", name:"Vitamin K (phylloquinone)",        label:"Vitamin K",     unit:"µg",   rda:120   },
+      ]},
+      { label:"Water-Soluble Vitamins", nutrients:[
+        { key:"vitC",   name:"Vitamin C, total ascorbic acid", label:"Vitamin C",     unit:"mg",   rda:90    },
+        { key:"b1",     name:"Thiamin",                        label:"Thiamin (B1)",  unit:"mg",   rda:1.2   },
+        { key:"b2",     name:"Riboflavin",                     label:"Riboflavin (B2)",unit:"mg",  rda:1.3   },
+        { key:"niacin", name:"Niacin",                         label:"Niacin (B3)",   unit:"mg",   rda:16    },
+        { key:"b6",     name:"Vitamin B-6",                    label:"Vitamin B6",    unit:"mg",   rda:1.7   },
+        { key:"folate", name:"Folate, DFE",                    label:"Folate",        unit:"µg",   rda:400   },
+        { key:"b12",    name:"Vitamin B-12",                   label:"Vitamin B12",   unit:"µg",   rda:2.4   },
+      ]},
+      { label:"Minerals", nutrients:[
+        { key:"calcium",    name:"Calcium, Ca",    label:"Calcium",    unit:"mg",  rda:1300  },
+        { key:"iron",       name:"Iron, Fe",       label:"Iron",       unit:"mg",  rda:18    },
+        { key:"magnesium",  name:"Magnesium, Mg",  label:"Magnesium",  unit:"mg",  rda:420   },
+        { key:"phosphorus", name:"Phosphorus, P",  label:"Phosphorus", unit:"mg",  rda:1250  },
+        { key:"potassium",  name:"Potassium, K",   label:"Potassium",  unit:"mg",  rda:4700  },
+        { key:"zinc",       name:"Zinc, Zn",       label:"Zinc",       unit:"mg",  rda:11    },
+        { key:"selenium",   name:"Selenium, Se",   label:"Selenium",   unit:"µg",  rda:55    },
+        { key:"copper",     name:"Copper, Cu",     label:"Copper",     unit:"mg",  rda:0.9   },
+        { key:"manganese",  name:"Manganese, Mn",  label:"Manganese",  unit:"mg",  rda:2.3   },
+      ]},
+    ];
+    const NUTRIENTS = NUTRIENT_GROUPS.flatMap(g => g.nutrients);
+
     /* ── Helpers ────────────────────────────────────────────────────────── */
     const initMeals = () =>
       Object.fromEntries(DAYS.map(d => [d, Object.fromEntries(MEALS.map(m => [m, []]))]));
@@ -161,7 +200,35 @@
       } catch { return null; }
     };
 
-    /* ── Plan Select ────────────────────────────────────────────────────── */
+    /* ── Nutrient helpers ───────────────────────────────────────────────── */
+    /* USDA branded foods report nutrients PER SERVING; SR Legacy / Foundation
+       and Open Food Facts report PER 100 g. normalizeOFF already tags source="off"
+       and dataType="Open Food Facts", so we only need to check dataType here.    */
+    const getNutrientPerServing = (item, nutrientName) => {
+      const nut = (item.nutrients || []).find(n => n.nutrientName === nutrientName);
+      if (!nut || nut.value == null) return null;
+      if (item.dataType === "Branded Food") return nut.value; // already per serving
+      const sg = item.servingSize || 100;                     // grams per serving
+      return (nut.value * sg) / 100;
+    };
+
+    const calcWeeklyNutrients = (items, meals) => {
+      const totals = Object.fromEntries(
+        NUTRIENTS.map(n => [n.key, { total: 0, itemsWithData: 0 }])
+      );
+      items.forEach(item => {
+        const used = getUsed(meals, item.id);
+        if (used === 0) return;
+        NUTRIENTS.forEach(n => {
+          const perServing = getNutrientPerServing(item, n.name);
+          if (perServing != null) {
+            totals[n.key].total        += perServing * used;
+            totals[n.key].itemsWithData += 1;
+          }
+        });
+      });
+      return totals;
+    };
     function PlanSelect({ onSelect, hasSaved }) {
       return (
         <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",flexDirection:"column",
@@ -268,7 +335,7 @@
               {activePlan==="thrifty"?"🧾 Thrifty":"✨ Preferred"} ▾
             </div>
             <div style={{display:"flex",gap:2,marginLeft:10}}>
-              {[{n:1,l:"Shopping List"},{n:2,l:"Meal Planner"}].map(s => (
+              {[{n:1,l:"Shopping List"},{n:2,l:"Meal Planner"},{n:3,l:"Nutrition"}].map(s => (
                 <button key={s.n} className="tab" onClick={() => setActiveStep(s.n)}
                   style={{background:activeStep===s.n?"var(--pri)":"transparent",
                     color:activeStep===s.n?"white":"var(--mu)"}}>
@@ -789,6 +856,221 @@
       );
     }
 
+    /* ── Step 3: Nutritional Summary ────────────────────────────────────── */
+    function Step3({ plans, sex }) {
+      const [view,      setView]      = useState("daily");
+      const [hideEmpty, setHideEmpty] = useState(true);
+
+      const planData = ["thrifty","preferred"].map(planKey => {
+        const plan      = plans[planKey];
+        const assigned  = plan.items.filter(it => getUsed(plan.meals, it.id) > 0);
+        const nutrients = calcWeeklyNutrients(plan.items, plan.meals);
+        const totalSpent   = plan.items.reduce((s,i) => s + i.price, 0);
+        const budgetLimit  = planKey === "thrifty" ? BUDGET[sex] : null;
+        return { planKey, plan, assigned, nutrients, totalSpent, budgetLimit };
+      });
+
+      const divisor    = view === "daily" ? 7 : 1;
+      const hasAnyData = planData.some(p => p.assigned.length > 0);
+
+      return (
+        <div className="fade-up">
+          {/* Header row */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+            <div>
+              <h2 style={{fontFamily:"'Lora',serif",fontSize:22,fontWeight:700,color:"var(--tx)"}}>
+                Nutritional Summary
+              </h2>
+              <p style={{fontSize:13,color:"var(--mu)",marginTop:3}}>
+                Based on foods assigned in your meal planner, compared against FDA daily values.
+              </p>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button className="btn" onClick={() => setHideEmpty(h => !h)}
+                style={{background:"white",border:"1.5px solid var(--bd)",color:"var(--mu)",
+                  padding:"6px 12px",fontSize:12,fontWeight:600}}>
+                {hideEmpty ? "Show missing data" : "Hide missing data"}
+              </button>
+              <div style={{display:"flex",gap:4,background:"#EDE7DC",borderRadius:9,padding:3}}>
+                {[["daily","Daily Avg"],["weekly","Weekly Total"]].map(([v,l]) => (
+                  <button key={v} className="tab" onClick={() => setView(v)}
+                    style={{background:view===v?"var(--card)":"transparent",
+                      color:view===v?"var(--tx)":"var(--mu)",
+                      boxShadow:view===v?"0 1px 4px rgba(24,10,0,.1)":"none"}}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {!hasAnyData ? (
+            <div style={{background:"var(--card)",borderRadius:"var(--r)",padding:"48px 20px",
+              textAlign:"center",color:"var(--mu)",border:"1px solid var(--bd)"}}>
+              <div style={{fontSize:36,marginBottom:10}}>📊</div>
+              <div style={{fontWeight:700,marginBottom:4,fontSize:15}}>No meals planned yet</div>
+              <div style={{fontSize:13}}>Assign food items in Step 2 to see your nutritional summary.</div>
+            </div>
+          ) : (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+              {planData.map(({ planKey, plan, assigned, nutrients, totalSpent, budgetLimit }) => {
+                const isThrifty   = planKey === "thrifty";
+                const overBudget  = isThrifty && totalSpent > budgetLimit;
+                const accentColor = isThrifty ? "var(--pri)" : "var(--sec)";
+                const accentBg    = isThrifty ? "var(--pli)"  : "var(--sli)";
+                const planLabel   = isThrifty ? "🧾 Thrifty Plan" : "✨ Preferred Plan";
+                const totalServings = assigned.reduce((s,it) => s + getUsed(plan.meals, it.id), 0);
+
+                return (
+                  <div key={planKey} style={{background:"var(--card)",borderRadius:"var(--r)",
+                    border:"1px solid var(--bd)",boxShadow:"0 2px 12px rgba(24,10,0,.07)",
+                    overflow:"hidden"}}>
+
+                    {/* Plan header */}
+                    <div style={{background:accentBg,padding:"14px 18px",borderBottom:"1px solid var(--bd)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{fontFamily:"'Lora',serif",fontSize:17,fontWeight:700,color:"var(--tx)"}}>
+                          {planLabel}
+                        </div>
+                        <div style={{fontSize:13,fontWeight:700,
+                          color:overBudget?"var(--warn)":accentColor}}>
+                          {$$(totalSpent)}{budgetLimit ? ` / ${$$(budgetLimit)}` : " spent"}
+                          {overBudget && " ⚠️"}
+                        </div>
+                      </div>
+                      <div style={{fontSize:12,color:"var(--mu)",marginTop:4}}>
+                        {assigned.length} item{assigned.length!==1?"s":""} · {totalServings} total servings planned
+                      </div>
+                    </div>
+
+                    {assigned.length === 0 ? (
+                      <div style={{padding:"32px 18px",textAlign:"center",color:"var(--mu)",fontSize:13}}>
+                        No meals assigned for this plan yet.
+                      </div>
+                    ) : (
+                      <div style={{padding:"16px 18px 12px"}}>
+                        {NUTRIENT_GROUPS.map(group => {
+                          const visible = hideEmpty
+                            ? group.nutrients.filter(n => nutrients[n.key].itemsWithData > 0)
+                            : group.nutrients;
+                          if (visible.length === 0) return null;
+                          return (
+                            <div key={group.label} style={{marginBottom:6}}>
+                              {/* Group header */}
+                              <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",
+                                letterSpacing:"1.2px",color:"var(--mu)",
+                                paddingBottom:6,marginBottom:10,marginTop:6,
+                                borderBottom:"1px solid var(--bd)"}}>
+                                {group.label}
+                              </div>
+                              {visible.map(n => {
+                                const weeklyVal  = nutrients[n.key].total;
+                                const displayVal = weeklyVal / divisor;
+                                const pct        = n.rda > 0 ? (displayVal / n.rda) * 100 : 0;
+                                const hasData    = nutrients[n.key].itemsWithData > 0;
+
+                                const barColor = !hasData ? "var(--bd)" :
+                                                 pct>150  ? "var(--warn)" :
+                                                 pct>110  ? "var(--acc)"  :
+                                                 pct>=80  ? "var(--sec)"  : "#BBBBBB";
+
+                                const pctText = !hasData  ? "No data" :
+                                                pct > 150 ? `${Math.round(pct)}% ⚠` :
+                                                            `${Math.round(pct)}%`;
+
+                                const pctColor = !hasData ? "var(--mu)"   :
+                                                 pct>150  ? "var(--warn)" :
+                                                 pct>110  ? "var(--low)"  :
+                                                 pct>=80  ? "var(--sec)"  : "var(--mu)";
+
+                                // Smart number formatting: tiny values (B12, selenium) need decimals
+                                const fmt = v =>
+                                  v === 0    ? "0" :
+                                  v < 0.1    ? v.toFixed(3) :
+                                  v < 10     ? v.toFixed(2) :
+                                  v < 100    ? v.toFixed(1) :
+                                              Math.round(v).toLocaleString();
+
+                                return (
+                                  <div key={n.key} style={{marginBottom:12}}>
+                                    <div style={{display:"flex",justifyContent:"space-between",
+                                      alignItems:"baseline",marginBottom:3}}>
+                                      <span style={{fontSize:12,fontWeight:600,
+                                        color:hasData?"var(--tx)":"var(--mu)"}}>
+                                        {n.label}
+                                      </span>
+                                      <span style={{display:"flex",gap:5,alignItems:"baseline"}}>
+                                        {hasData ? (
+                                          <>
+                                            <span style={{fontFamily:"'Lora',serif",fontSize:14,
+                                              fontWeight:700,color:"var(--tx)"}}>
+                                              {fmt(displayVal)}
+                                              <span style={{fontSize:10,fontWeight:400,
+                                                color:"var(--mu)",marginLeft:1}}>{n.unit}</span>
+                                            </span>
+                                            <span style={{fontSize:10,color:"var(--mu)"}}>
+                                              / {fmt(n.rda)} {n.unit}
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <span style={{fontSize:11,color:"var(--mu)",fontStyle:"italic"}}>
+                                            No data
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                    <div style={{height:5,borderRadius:3,background:"#EDE7DC",overflow:"hidden"}}>
+                                      {hasData ? (
+                                        <div style={{height:"100%",borderRadius:3,
+                                          width:`${Math.min(pct,100)}%`,
+                                          background:barColor,transition:"width .4s ease"}} />
+                                      ) : (
+                                        <div style={{height:"100%",borderRadius:3,width:"100%",
+                                          background:"repeating-linear-gradient(90deg,#EDE7DC 0,#EDE7DC 5px,#DDD3C5 5px,#DDD3C5 10px)"}} />
+                                      )}
+                                    </div>
+                                    <div style={{fontSize:10,color:pctColor,marginTop:2,textAlign:"right",
+                                      fontWeight:(hasData&&(pct>110||pct<80))?600:400}}>
+                                      {pctText} of daily goal
+                                      {view==="weekly" && hasData &&
+                                        <span style={{color:"var(--mu)",fontWeight:400}}>
+                                          {" "}· {fmt(weeklyVal)} {n.unit} this week
+                                        </span>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+
+                        {/* Missing data note when showing all */}
+                        {!hideEmpty && NUTRIENTS.some(n => nutrients[n.key].itemsWithData === 0) && (
+                          <div style={{background:"var(--ali)",border:"1px solid #EDD8A0",
+                            borderRadius:7,padding:"8px 11px",marginTop:8,
+                            fontSize:11,color:"#7A5600",lineHeight:1.55}}>
+                            ⚠ Hatched bars = no data available. Common for vitamins and minerals
+                            in branded/packaged items. USDA whole-food entries tend to have better coverage.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Disclaimer */}
+          <div style={{marginTop:16,fontSize:11,color:"var(--mu)",textAlign:"center",lineHeight:1.6}}>
+            RDA benchmarks: FDA Daily Values for a 2,000 kcal diet ·
+            Nutrient totals reflect only items assigned in the Meal Planner ·
+            Values are estimates and may vary by brand or preparation method
+          </div>
+        </div>
+      );
+    }
+
     /* ── App ────────────────────────────────────────────────────────────── */
     function App() {
       const saved = loadSaved();
@@ -864,10 +1146,35 @@
         return () => clearTimeout(debRef.current);
       }, [searchQuery]);
 
-      const selectFood = food => {
+      const selectFood = async food => {
         setSelectedFood(food);
         if (food) setSearchQuery(food.description);
         setShowDropdown(false);
+        // For USDA items, fetch the full food detail to get the complete nutrient profile
+        // (the search endpoint only returns a subset; the detail endpoint has all 40+ nutrients)
+        if (food && food.source !== "off" && food.fdcId && !String(food.fdcId).startsWith("off_")) {
+          try {
+            const res  = await fetch(`https://api.nal.usda.gov/fdc/v1/food/${food.fdcId}?api_key=${USDA_KEY}`);
+            const detail = await res.json();
+            // Detail endpoint format: { nutrient: { name, unitName }, amount }
+            // Search endpoint format: { nutrientName, value, unitName }
+            // Normalize to the search format so the rest of the tool is consistent
+            const fullNutrients = (detail.foodNutrients || [])
+              .map(fn => ({
+                nutrientName: fn.nutrient?.name || fn.nutrientName,
+                value:        fn.amount ?? fn.value,
+                unitName:     fn.nutrient?.unitName || fn.unitName,
+              }))
+              .filter(n => n.nutrientName && n.value != null);
+            if (fullNutrients.length > 0) {
+              setSelectedFood(prev =>
+                prev?.fdcId === food.fdcId
+                  ? { ...prev, foodNutrients: fullNutrients }
+                  : prev
+              );
+            }
+          } catch(e) { /* silently fall back to search-result nutrients */ }
+        }
       };
 
       const addToList = () => {
@@ -971,6 +1278,9 @@
                 pickerServings={pickerServings} setPickerServings={setPickerServings}
                 assignMeal={assignMeal} removeFromSlot={removeFromSlot}
               />
+            )}
+            {activeStep === 3 && (
+              <Step3 plans={plans} sex={sex} />
             )}
           </div>
         </div>
