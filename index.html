@@ -121,6 +121,34 @@
 
     const $$ = n => `$${parseFloat(n || 0).toFixed(2)}`;
 
+    /* Normalize an Open Food Facts product into the same shape as a USDA food */
+    const normalizeOFF = p => {
+      const nm = p.nutriments || {};
+      // OFF stores nutrients per 100g; serving_quantity is grams per serving
+      const sg = parseFloat(p.serving_quantity) || 100;
+      const n100 = key => (nm[key + "_100g"] != null ? nm[key + "_100g"] : null);
+      return {
+        fdcId:               "off_" + (p.id || p.code || Math.random()),
+        description:         (p.product_name || p.product_name_en || "").trim(),
+        brandName:           p.brands ? p.brands.split(",")[0].trim() : "",
+        servingSize:         sg,
+        servingSizeUnit:     "g",
+        servingsPerContainer: null,
+        dataType:            "Open Food Facts",
+        source:              "off",
+        foodNutrients: [
+          { nutrientName:"Energy",                     value: n100("energy-kcal"), unitName:"kcal" },
+          { nutrientName:"Protein",                    value: n100("proteins"),    unitName:"g"    },
+          { nutrientName:"Total lipid (fat)",          value: n100("fat"),         unitName:"g"    },
+          { nutrientName:"Carbohydrate, by difference",value: n100("carbohydrates"),unitName:"g"  },
+          { nutrientName:"Fiber, total dietary",       value: n100("fiber"),       unitName:"g"    },
+          /* OFF sodium is g/100g → convert to mg */
+          { nutrientName:"Sodium, Na", unitName:"mg",
+            value: n100("sodium") != null ? Math.round(n100("sodium") * 1000) : null },
+        ].filter(n => n.value != null),
+      };
+    };
+
     const loadSaved = () => {
       try {
         const raw = localStorage.getItem("fcp_plans");
@@ -337,8 +365,12 @@
                           <span style={{fontSize:11,color:"var(--mu)"}}>
                             Serving: {food.servingSize} {food.servingSizeUnit}
                           </span>}
-                        <span style={{fontSize:10,color:"#B0A090",background:"#F4EFE6",
-                          borderRadius:3,padding:"1px 5px"}}>{food.dataType}</span>
+                        <span style={{fontSize:10,
+                          color: food.source==="off" ? "#2A6B3A" : "#8A6040",
+                          background: food.source==="off" ? "#DDF0E5" : "#F4EFE6",
+                          borderRadius:3,padding:"1px 5px"}}>
+                          {food.source==="off" ? "📦 Open Food Facts" : `🌾 ${food.dataType||"USDA"}`}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -807,11 +839,22 @@
         debRef.current = setTimeout(async () => {
           setSearching(true);
           try {
-            const res = await fetch(
-              `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(searchQuery)}&pageSize=8&api_key=${USDA_KEY}`
-            );
-            const d = await res.json();
-            setSearchResults(d.foods || []);
+            const [usdaRes, offRes] = await Promise.all([
+              fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(searchQuery)}&pageSize=6&api_key=${USDA_KEY}`),
+              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(searchQuery)}&search_simple=1&action=process&json=1&page_size=6&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
+            ]);
+            const [usdaData, offData] = await Promise.all([usdaRes.json(), offRes.json()]);
+
+            const usdaFoods = (usdaData.foods || [])
+              .slice(0, 5)
+              .map(f => ({ ...f, source: "usda" }));
+
+            const offFoods = (offData.products || [])
+              .filter(p => (p.product_name || p.product_name_en || "").trim())
+              .slice(0, 5)
+              .map(normalizeOFF);
+
+            setSearchResults([...usdaFoods, ...offFoods]);
             setShowDropdown(true);
           } catch(e) {
             console.error("Search error:", e);
