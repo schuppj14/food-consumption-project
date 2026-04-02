@@ -73,6 +73,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
@@ -229,6 +230,58 @@
       });
       return totals;
     };
+
+    /* ── Export helpers ─────────────────────────────────────────────────── */
+    const escCSV = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rowToCSV = r => r.map(escCSV).join(",");
+
+    const buildShoppingRows = items => {
+      const header = ["Food Item","Brand","Qty Purchased","Unit","Total Servings","Price ($)","Cost/Serving ($)"];
+      const rows   = items.map(it => [
+        it.name, it.brandName || "", it.purchasedQty, it.purchasedUnit,
+        it.totalServings, parseFloat(it.price).toFixed(2),
+        parseFloat(it.costPerServing).toFixed(2),
+      ]);
+      const total = items.reduce((s,i) => s + i.price, 0);
+      return [header, ...rows, ["TOTAL","","","","",total.toFixed(2),""]];
+    };
+
+    const buildMealRows = (items, meals) => {
+      const header = ["Day","Breakfast","Lunch","Dinner","Snack"];
+      return [header, ...DAYS.map(day => [
+        day,
+        ...MEALS.map(meal =>
+          (meals[day]?.[meal] || [])
+            .map(e => { const it = items.find(i => i.id === e.itemId); return it ? `${it.name.split(",")[0]} x${e.servings}` : ""; })
+            .filter(Boolean).join("; ") || ""
+        ),
+      ])];
+    };
+
+    const buildNutritionRows = plans => {
+      const tNut = calcWeeklyNutrients(plans.thrifty.items,   plans.thrifty.meals);
+      const pNut = calcWeeklyNutrients(plans.preferred.items, plans.preferred.meals);
+      const fmt  = v => v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v).toString();
+      const header = ["Group","Nutrient","Unit","RDA",
+        "Thrifty - Daily Avg","Thrifty - % of RDA",
+        "Preferred - Daily Avg","Preferred - % of RDA"];
+      const rows = [];
+      NUTRIENT_GROUPS.forEach(group => {
+        group.nutrients.forEach(n => {
+          const tVal = tNut[n.key].total / 7, tHas = tNut[n.key].itemsWithData > 0;
+          const pVal = pNut[n.key].total / 7, pHas = pNut[n.key].itemsWithData > 0;
+          rows.push([
+            group.label, n.label, n.unit, n.rda,
+            tHas ? fmt(tVal)                       : "No data",
+            tHas ? (tVal/n.rda*100).toFixed(1)+"%" : "No data",
+            pHas ? fmt(pVal)                       : "No data",
+            pHas ? (pVal/n.rda*100).toFixed(1)+"%" : "No data",
+          ]);
+        });
+      });
+      return [header, ...rows];
+    };
+
     function PlanSelect({ onSelect, hasSaved }) {
       return (
         <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",flexDirection:"column",
@@ -319,7 +372,7 @@
     }
 
     /* ── Header ─────────────────────────────────────────────────────────── */
-    function Header({ activePlan, activeStep, setActiveStep, totalSpent, budgetLimit, overBudget, onSwitch }) {
+    function Header({ activePlan, activeStep, setActiveStep, totalSpent, budgetLimit, overBudget, onSwitch, onReset, onExport }) {
       const pct  = budgetLimit ? Math.min(100, (totalSpent / budgetLimit) * 100) : 0;
       const barC = overBudget ? "var(--warn)" : pct > 85 ? "var(--acc)" : "var(--sec)";
       return (
@@ -367,6 +420,18 @@
                 marginLeft:4}} title="Your work saves automatically">
                 <span className="save-dot" />saved
               </div>
+              <button className="btn" onClick={onExport}
+                title="Export to CSV or Excel"
+                style={{background:"var(--sli)",color:"var(--sec)",padding:"5px 10px",
+                  fontSize:12,border:"1px solid #AACDB8"}}>
+                ⬇ Export
+              </button>
+              <button className="btn" onClick={onReset}
+                title="Reset plan data"
+                style={{background:"var(--wbg)",color:"var(--warn)",padding:"5px 10px",
+                  fontSize:12,border:"1px solid #F0B8A8"}}>
+                ↺ Reset
+              </button>
             </div>
           </div>
         </div>
@@ -1099,6 +1164,8 @@
       const [selectedSlot,   setSelectedSlot]   = useState(null);
       const [pickerItemId,   setPickerItemId]   = useState("");
       const [pickerServings, setPickerServings] = useState(1);
+      const [showReset,      setShowReset]      = useState(false);
+      const [showExport,     setShowExport]     = useState(false);
 
       // Persist to localStorage on every plans change
       useEffect(() => {
@@ -1237,6 +1304,57 @@
         });
       };
 
+      const resetPlan = which => {
+        const blank = () => ({ items: [], meals: initMeals() });
+        setPlans(p => ({
+          thrifty:   which === "preferred" ? p.thrifty   : blank(),
+          preferred: which === "thrifty"   ? p.preferred : blank(),
+        }));
+        setShowReset(false);
+      };
+
+      const downloadCSV = () => {
+        const sections = [
+          ["THRIFTY PLAN - SHOPPING LIST"],
+          ...buildShoppingRows(plans.thrifty.items),
+          [],
+          ["PREFERRED PLAN - SHOPPING LIST"],
+          ...buildShoppingRows(plans.preferred.items),
+          [],
+          ["THRIFTY PLAN - MEAL PLANNER"],
+          ...buildMealRows(plans.thrifty.items, plans.thrifty.meals),
+          [],
+          ["PREFERRED PLAN - MEAL PLANNER"],
+          ...buildMealRows(plans.preferred.items, plans.preferred.meals),
+          [],
+          ["NUTRITIONAL SUMMARY (Daily Averages vs FDA Daily Values)"],
+          ...buildNutritionRows(plans),
+        ];
+        const csv  = sections.map(r => Array.isArray(r) ? rowToCSV(r) : "").join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const a    = document.createElement("a");
+        a.href     = URL.createObjectURL(blob);
+        a.download = "food-consumption-project.csv";
+        a.click();
+        setShowExport(false);
+      };
+
+      const downloadXLSX = () => {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,
+          XLSX.utils.aoa_to_sheet(buildShoppingRows(plans.thrifty.items)),   "Thrifty - Shopping");
+        XLSX.utils.book_append_sheet(wb,
+          XLSX.utils.aoa_to_sheet(buildShoppingRows(plans.preferred.items)), "Preferred - Shopping");
+        XLSX.utils.book_append_sheet(wb,
+          XLSX.utils.aoa_to_sheet(buildMealRows(plans.thrifty.items,   plans.thrifty.meals)),   "Thrifty - Meals");
+        XLSX.utils.book_append_sheet(wb,
+          XLSX.utils.aoa_to_sheet(buildMealRows(plans.preferred.items, plans.preferred.meals)), "Preferred - Meals");
+        XLSX.utils.book_append_sheet(wb,
+          XLSX.utils.aoa_to_sheet(buildNutritionRows(plans)), "Nutrition Summary");
+        XLSX.writeFile(wb, "food-consumption-project.xlsx");
+        setShowExport(false);
+      };
+
       // Screen routing
       if (screen === "plan-select") return (
         <PlanSelect hasSaved={hasSaved} onSelect={plan => {
@@ -1254,6 +1372,8 @@
             activePlan={activePlan} activeStep={activeStep} setActiveStep={setActiveStep}
             totalSpent={totalSpent} budgetLimit={budgetLimit} overBudget={overBudget}
             onSwitch={() => { setScreen("plan-select"); setActiveStep(1); }}
+            onReset={() => setShowReset(true)}
+            onExport={() => setShowExport(true)}
           />
           <div style={{maxWidth:1200,margin:"0 auto",padding:"20px 16px"}}>
             {activeStep === 1 && (
@@ -1283,6 +1403,90 @@
               <Step3 plans={plans} sex={sex} />
             )}
           </div>
+
+          {/* ── Reset Modal ── */}
+          {showReset && (
+            <div onClick={() => setShowReset(false)}
+              style={{position:"fixed",inset:0,background:"rgba(24,10,0,.5)",
+                zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div className="pop-in" onClick={e => e.stopPropagation()}
+                style={{background:"var(--card)",borderRadius:14,padding:28,maxWidth:380,
+                  width:"100%",boxShadow:"0 8px 40px rgba(24,10,0,.2)"}}>
+                <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>↺</div>
+                <h3 style={{fontFamily:"'Lora',serif",fontSize:19,fontWeight:700,
+                  color:"var(--tx)",textAlign:"center",marginBottom:8}}>Reset Plan Data</h3>
+                <p style={{fontSize:13,color:"var(--mu)",lineHeight:1.65,textAlign:"center",marginBottom:20}}>
+                  This permanently deletes your shopping list and meal assignments.
+                  Choose which plan to reset — this cannot be undone.
+                </p>
+                <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+                  {[
+                    { label:"Reset Thrifty Plan only",   which:"thrifty",   bg:"var(--wbg)", c:"var(--warn)" },
+                    { label:"Reset Preferred Plan only",  which:"preferred", bg:"var(--wbg)", c:"var(--warn)" },
+                    { label:"Reset Both Plans",           which:"both",      bg:"var(--warn)",c:"white"       },
+                  ].map(opt => (
+                    <button key={opt.which} className="btn" onClick={() => resetPlan(opt.which)}
+                      style={{background:opt.bg,color:opt.c,padding:"10px 0",
+                        fontSize:13,border:`1px solid ${opt.which==="both"?"var(--warn)":"#F0B8A8"}`}}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="btn" onClick={() => setShowReset(false)}
+                  style={{background:"var(--bd)",color:"var(--mu)",padding:"9px 0",
+                    fontSize:13,width:"100%"}}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Export Modal ── */}
+          {showExport && (
+            <div onClick={() => setShowExport(false)}
+              style={{position:"fixed",inset:0,background:"rgba(24,10,0,.5)",
+                zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div className="pop-in" onClick={e => e.stopPropagation()}
+                style={{background:"var(--card)",borderRadius:14,padding:28,maxWidth:400,
+                  width:"100%",boxShadow:"0 8px 40px rgba(24,10,0,.2)"}}>
+                <div style={{fontSize:32,marginBottom:12,textAlign:"center"}}>⬇</div>
+                <h3 style={{fontFamily:"'Lora',serif",fontSize:19,fontWeight:700,
+                  color:"var(--tx)",textAlign:"center",marginBottom:8}}>Export Your Data</h3>
+                <p style={{fontSize:13,color:"var(--mu)",lineHeight:1.65,textAlign:"center",marginBottom:6}}>
+                  Downloads both plans in one file with five sheets:
+                </p>
+                <ul style={{fontSize:12,color:"var(--mu)",marginBottom:20,
+                  paddingLeft:20,lineHeight:2}}>
+                  <li>Thrifty Plan — Shopping List</li>
+                  <li>Preferred Plan — Shopping List</li>
+                  <li>Thrifty Plan — Meal Planner</li>
+                  <li>Preferred Plan — Meal Planner</li>
+                  <li>Nutritional Summary (both plans)</li>
+                </ul>
+                <div style={{display:"flex",gap:10,marginBottom:12}}>
+                  <button className="btn" onClick={downloadXLSX}
+                    style={{flex:1,background:"var(--sec)",color:"white",
+                      padding:"12px 0",fontSize:14}}>
+                    ⬇ Excel (.xlsx)
+                  </button>
+                  <button className="btn" onClick={downloadCSV}
+                    style={{flex:1,background:"var(--sli)",color:"var(--sec)",
+                      padding:"12px 0",fontSize:14,border:"1px solid #AACDB8"}}>
+                    ⬇ CSV
+                  </button>
+                </div>
+                <div style={{fontSize:11,color:"var(--mu)",textAlign:"center",marginBottom:14,lineHeight:1.5}}>
+                  Excel is recommended — multiple sheets, opens directly in Excel or Google Sheets.<br/>
+                  CSV is a single file with all sections stacked, separated by blank rows.
+                </div>
+                <button className="btn" onClick={() => setShowExport(false)}
+                  style={{background:"var(--bd)",color:"var(--mu)",padding:"9px 0",
+                    fontSize:13,width:"100%"}}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
