@@ -126,6 +126,25 @@
     ];
     const NUTRIENTS = NUTRIENT_GROUPS.flatMap(g => g.nutrients);
 
+    /* ── Step 3 display nutrients (12-nutrient focused set) ─────────────── */
+    /* The full NUTRIENT_GROUPS (26 nutrients) is retained for export.       */
+    /* All 12 keys below exist in NUTRIENT_GROUPS so calcWeeklyNutrients     */
+    /* already computes them — no changes to the calculation layer needed.   */
+    const STEP3_NUTRIENTS = [
+      { key:"calories",  name:"Energy",                         label:"Calories",  unit:"kcal", rda:2000, group:"Macronutrients" },
+      { key:"protein",   name:"Protein",                        label:"Protein",   unit:"g",    rda:50,   group:"Macronutrients" },
+      { key:"fat",       name:"Total lipid (fat)",              label:"Total Fat", unit:"g",    rda:78,   group:"Macronutrients" },
+      { key:"carbs",     name:"Carbohydrate, by difference",    label:"Carbs",     unit:"g",    rda:275,  group:"Macronutrients" },
+      { key:"fiber",     name:"Fiber, total dietary",           label:"Fiber",     unit:"g",    rda:28,   group:"Macronutrients" },
+      { key:"sodium",    name:"Sodium, Na",                     label:"Sodium",    unit:"mg",   rda:2300, group:"Macronutrients" },
+      { key:"iron",      name:"Iron, Fe",                       label:"Iron",      unit:"mg",   rda:18,   group:"Micronutrients" },
+      { key:"calcium",   name:"Calcium, Ca",                    label:"Calcium",   unit:"mg",   rda:1300, group:"Micronutrients" },
+      { key:"potassium", name:"Potassium, K",                   label:"Potassium", unit:"mg",   rda:4700, group:"Micronutrients" },
+      { key:"vitC",      name:"Vitamin C, total ascorbic acid", label:"Vitamin C", unit:"mg",   rda:90,   group:"Micronutrients" },
+      { key:"vitD",      name:"Vitamin D (D2 + D3)",            label:"Vitamin D", unit:"µg",   rda:20,   group:"Micronutrients" },
+      { key:"folate",    name:"Folate, DFE",                    label:"Folate",    unit:"µg",   rda:400,  group:"Micronutrients" },
+    ];
+
     /* ── Helpers ────────────────────────────────────────────────────────── */
     const initMeals = () =>
       Object.fromEntries(DAYS.map(d => [d, Object.fromEntries(MEALS.map(m => [m, []]))]));
@@ -299,12 +318,15 @@
     };
 
     const calcWeeklyNutrients = (items, meals) => {
+      // Pre-filter to assigned items so we can track totalAssigned per nutrient entry.
+      // totalAssigned = items that appear in any meal slot; used for "X of Y items" coverage notes.
+      const assigned = items.filter(it => getUsed(meals, it.id) > 0);
+      const totalAssigned = assigned.length;
       const totals = Object.fromEntries(
-        NUTRIENTS.map(n => [n.key, { total: 0, itemsWithData: 0 }])
+        NUTRIENTS.map(n => [n.key, { total: 0, itemsWithData: 0, totalAssigned }])
       );
-      items.forEach(item => {
+      assigned.forEach(item => {
         const used = getUsed(meals, item.id);
-        if (used === 0) return;
         NUTRIENTS.forEach(n => {
           const perServing = getNutrientPerServing(item, n.name);
           if (perServing != null) {
@@ -527,9 +549,33 @@
     function Step1({ activePlan, items, totalSpent, budgetLimit, overBudget, goToStep2,
       searchQuery, setSearchQuery, searchResults, searching, showDropdown, setShowDropdown,
       selectedFood, setSelectedFood, selectFood,
-      qty, setQty, unit, setUnit, price, setPrice, addToList, removeItem }) {
+      qty, setQty, unit, setUnit, price, setPrice, addToList, removeItem, addManualItem }) {
 
       const dropRef = useRef(null);
+
+      // ── Manual entry form state ──────────────────────────────────────────
+      const [showManual, setShowManual] = useState(false);
+      const BLANK_FORM = { name:"", brand:"", url:"", servingSize:"", servingsPerContainer:"",
+                           calories:"", protein:"", fat:"", carbs:"", fiber:"", sodium:"",
+                           qty:"", unit:"oz", price:"" };
+      const [mForm, setMForm] = useState(BLANK_FORM);
+      const setM = (field, val) => setMForm(f => ({ ...f, [field]: val }));
+
+      // Servings-per-container is required only when unit is "each" (see calcServings logic).
+      const manualCanAdd = !!(
+        mForm.name.trim() &&
+        parseFloat(mForm.servingSize) > 0 &&
+        parseFloat(mForm.qty) > 0 &&
+        parseFloat(mForm.price) > 0 &&
+        (mForm.unit !== "each" || parseFloat(mForm.servingsPerContainer) > 0)
+      );
+
+      const submitManual = () => {
+        if (!manualCanAdd) return;
+        addManualItem({ ...mForm });
+        setMForm(BLANK_FORM);
+        setShowManual(false);
+      };
       useEffect(() => {
         const h = e => { if (dropRef.current && !dropRef.current.contains(e.target)) setShowDropdown(false); };
         document.addEventListener("mousedown", h);
@@ -545,119 +591,292 @@
           {/* Left: Add Panel */}
           <div style={{background:"var(--card)",borderRadius:"var(--r)",padding:22,
             boxShadow:"0 2px 12px rgba(24,10,0,.07)",border:"1px solid var(--bd)"}}>
-            <h2 style={{fontFamily:"'Lora',serif",fontSize:18,fontWeight:700,marginBottom:4,color:"var(--tx)"}}>
-              Add Food Item
-            </h2>
-            <p style={{fontSize:12,color:"var(--mu)",marginBottom:18}}>
-              Search the USDA FoodData Central database — including branded products.
-            </p>
 
-            {/* Search */}
-            <div ref={dropRef} style={{position:"relative",marginBottom:12}}>
-              <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
-                marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Search Food</label>
-              <div style={{position:"relative"}}>
-                <input className="inp" value={searchQuery}
-                  onChange={e => { setSearchQuery(e.target.value); if (!e.target.value) setSelectedFood(null); }}
-                  onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
-                  placeholder="e.g. 'Cheerios' or 'whole milk'"
-                  style={{paddingRight:32}} />
-                <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
-                  fontSize:14,pointerEvents:"none"}}>{searching?"⏳":"🔍"}</span>
-              </div>
-              {showDropdown && searchResults.length > 0 && (
-                <div style={{position:"absolute",top:"calc(100% + 3px)",left:0,right:0,background:"white",
-                  border:"1.5px solid var(--bd)",borderRadius:8,
-                  boxShadow:"0 4px 22px rgba(24,10,0,.12)",zIndex:200,maxHeight:260,overflowY:"auto"}}>
-                  {searchResults.map(food => (
-                    <div key={food.fdcId} className="result-row" onClick={() => selectFood(food)}
-                      style={{padding:"9px 12px",borderBottom:"1px solid var(--bd)"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"var(--tx)",lineHeight:1.3}}>{food.description}</div>
-                      <div style={{display:"flex",gap:8,marginTop:2,flexWrap:"wrap",alignItems:"center"}}>
-                        {(food.brandName||food.brandOwner) &&
-                          <span style={{fontSize:11,color:"var(--pri)",fontWeight:500}}>
-                            {food.brandName||food.brandOwner}
-                          </span>}
-                        {food.servingSize &&
-                          <span style={{fontSize:11,color:"var(--mu)"}}>
-                            Serving: {food.servingSize} {food.servingSizeUnit}
-                          </span>}
-                        <span style={{fontSize:10,
-                          color: food.source==="off" ? "#2A6B3A" : "#8A6040",
-                          background: food.source==="off" ? "#DDF0E5" : "#F4EFE6",
-                          borderRadius:3,padding:"1px 5px"}}>
-                          {food.source==="off" ? "📦 Open Food Facts" : `🌾 ${food.dataType||"USDA"}`}
-                        </span>
+            {/* Mode toggle */}
+            <div style={{display:"flex",gap:4,background:"#EDE7DC",borderRadius:9,padding:3,marginBottom:18}}>
+              {[{v:false,l:"🔍 Search"},{v:true,l:"✏️ Enter Manually"}].map(o => (
+                <button key={String(o.v)} className="tab"
+                  onClick={() => setShowManual(o.v)}
+                  style={{flex:1,background:showManual===o.v?"var(--card)":"transparent",
+                    color:showManual===o.v?"var(--tx)":"var(--mu)",
+                    boxShadow:showManual===o.v?"0 1px 4px rgba(24,10,0,.1)":"none",
+                    fontSize:12}}>
+                  {o.l}
+                </button>
+              ))}
+            </div>
+
+            {!showManual ? (
+              /* ── Search mode ── */
+              <div>
+                <h2 style={{fontFamily:"'Lora',serif",fontSize:18,fontWeight:700,marginBottom:4,color:"var(--tx)"}}>
+                  Add Food Item
+                </h2>
+                <p style={{fontSize:12,color:"var(--mu)",marginBottom:18}}>
+                  Search for generic foods or branded products. Generic foods have better nutrient data.
+                </p>
+
+                {/* Search */}
+                <div ref={dropRef} style={{position:"relative",marginBottom:12}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Search Food</label>
+                  <div style={{position:"relative"}}>
+                    <input className="inp" value={searchQuery}
+                      onChange={e => { setSearchQuery(e.target.value); if (!e.target.value) setSelectedFood(null); }}
+                      onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
+                      placeholder="e.g. 'whole milk' or 'Cheerios'"
+                      style={{paddingRight:32}} />
+                    <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+                      fontSize:14,pointerEvents:"none"}}>{searching?"⏳":"🔍"}</span>
+                  </div>
+
+                  {/* Tiered dropdown */}
+                  {showDropdown && searchResults.length > 0 && (
+                    <div style={{position:"absolute",top:"calc(100% + 3px)",left:0,right:0,background:"white",
+                      border:"1.5px solid var(--bd)",borderRadius:8,
+                      boxShadow:"0 4px 22px rgba(24,10,0,.12)",zIndex:200,maxHeight:300,overflowY:"auto"}}>
+                      {(() => {
+                        // Group consecutive items by tier for visual dividers
+                        const groups = searchResults.reduce((acc, food) => {
+                          const last = acc[acc.length - 1];
+                          if (!last || last.tier !== food.tier) acc.push({ tier: food.tier, foods: [food] });
+                          else last.foods.push(food);
+                          return acc;
+                        }, []);
+                        const hasGeneric = searchResults.some(f => f.tier === "generic");
+                        const TIER_META = {
+                          generic: { icon:"🌿", label:"Generic Foods",    sub:"complete nutrient data",   badgeColor:"#2A5F3A", badgeBg:"#D5EDDF" },
+                          branded: { icon:"🏷️",  label:"Branded Products", sub:"USDA database",            badgeColor:"#8A6040", badgeBg:"#F4EFE6" },
+                          off:     { icon:"📦", label:"Open Food Facts",  sub:"packaged products",         badgeColor:"#2A6B3A", badgeBg:"#DDF0E5" },
+                        };
+                        return (
+                          <>
+                            {groups.map((group, gi) => {
+                              const tm = TIER_META[group.tier] || { icon:"🔍", label:group.tier, sub:"", badgeColor:"#888", badgeBg:"#EEE" };
+                              return (
+                                <div key={group.tier}>
+                                  <div style={{padding:"5px 12px 4px",background:"#F5F0E8",
+                                    borderTop: gi > 0 ? "1px solid var(--bd)" : "none",
+                                    display:"flex",alignItems:"baseline",gap:6}}>
+                                    <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",
+                                      letterSpacing:"1px",color:"var(--mu)"}}>{tm.icon} {tm.label}</span>
+                                    <span style={{fontSize:10,color:"#AFA090",fontStyle:"italic"}}>{tm.sub}</span>
+                                  </div>
+                                  {group.foods.map(food => (
+                                    <div key={food.fdcId} className="result-row" onClick={() => selectFood(food)}
+                                      style={{padding:"9px 12px",borderBottom:"1px solid #F0EAE0"}}>
+                                      <div style={{fontSize:13,fontWeight:600,color:"var(--tx)",lineHeight:1.3}}>
+                                        {food.description}
+                                      </div>
+                                      <div style={{display:"flex",gap:8,marginTop:2,flexWrap:"wrap",alignItems:"center"}}>
+                                        {(food.brandName||food.brandOwner) &&
+                                          <span style={{fontSize:11,color:"var(--pri)",fontWeight:500}}>
+                                            {food.brandName||food.brandOwner}
+                                          </span>}
+                                        {food.servingSize &&
+                                          <span style={{fontSize:11,color:"var(--mu)"}}>
+                                            Serving: {food.servingSize} {food.servingSizeUnit}
+                                          </span>}
+                                        <span style={{fontSize:10,color:tm.badgeColor,background:tm.badgeBg,
+                                          borderRadius:3,padding:"1px 5px"}}>
+                                          {tm.icon} {food.dataType || group.tier}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                            {/* No-generic-match tip */}
+                            {!hasGeneric && (
+                              <div style={{padding:"8px 12px",background:"var(--ali)",
+                                borderTop:"1px solid #EDD8A0",fontSize:11,color:"#7A5600",lineHeight:1.55}}>
+                                💡 No generic match found — for better nutrient data, try a simpler
+                                search term like <em>"bread"</em> or <em>"whole milk."</em>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected food */}
+                {selectedFood && (
+                  <div style={{background:"var(--pli)",border:"1px solid #E8C9B4",borderRadius:8,
+                    padding:"9px 11px",marginBottom:12,fontSize:12}}>
+                    <div style={{fontWeight:700,color:"var(--pri)",marginBottom:2}}>✓ Selected</div>
+                    <div style={{fontWeight:600,color:"var(--tx)",lineHeight:1.4}}>{selectedFood.description}</div>
+                    {(selectedFood.brandName||selectedFood.brandOwner) &&
+                      <div style={{color:"var(--mu)"}}>{selectedFood.brandName||selectedFood.brandOwner}</div>}
+                    {selectedFood.servingSize &&
+                      <div style={{color:"var(--mu)"}}>Serving: {selectedFood.servingSize} {selectedFood.servingSizeUnit}</div>}
+                  </div>
+                )}
+
+                {/* Qty + Unit */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Quantity</label>
+                    <input className="inp" type="number" min="0" step="any" value={qty}
+                      onChange={e => setQty(e.target.value)} placeholder="e.g. 16" />
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Unit</label>
+                    <select className="inp" value={unit} onChange={e => setUnit(e.target.value)}>
+                      {UNITS.map(u => <option key={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Price */}
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Price Paid ($)</label>
+                  <input className="inp" type="number" min="0" step="0.01" value={price}
+                    onChange={e => setPrice(e.target.value)} placeholder="e.g. 3.49" />
+                </div>
+
+                {/* Preview */}
+                {est > 0 && (
+                  <div style={{background:"#F0EBE0",borderRadius:8,padding:"12px 10px",marginBottom:14,
+                    display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,textAlign:"center"}}>
+                    <div>
+                      <div style={{fontFamily:"'Lora',serif",fontSize:26,fontWeight:700,color:"var(--tx)"}}>{est}</div>
+                      <div style={{fontSize:10,color:"var(--mu)",fontWeight:700,
+                        textTransform:"uppercase",letterSpacing:".5px"}}>Servings</div>
+                    </div>
+                    {cpp && (
+                      <div style={{borderLeft:"1px solid var(--bd)"}}>
+                        <div style={{fontFamily:"'Lora',serif",fontSize:26,fontWeight:700,color:"var(--sec)"}}>${cpp}</div>
+                        <div style={{fontSize:10,color:"var(--mu)",fontWeight:700,
+                          textTransform:"uppercase",letterSpacing:".5px"}}>Per Serving</div>
                       </div>
+                    )}
+                  </div>
+                )}
+
+                <button className="btn" onClick={addToList} disabled={!canAdd}
+                  style={{background:canAdd?"var(--pri)":"var(--bd)",
+                    color:canAdd?"white":"var(--mu)",padding:"11px 0",
+                    fontSize:14,width:"100%",opacity:canAdd?1:.7}}>
+                  + Add to Shopping List
+                </button>
+              </div>
+            ) : (
+              /* ── Manual entry mode ── */
+              <div>
+                <h2 style={{fontFamily:"'Lora',serif",fontSize:18,fontWeight:700,marginBottom:4,color:"var(--tx)"}}>
+                  Enter from Label
+                </h2>
+                <p style={{fontSize:12,color:"var(--mu)",marginBottom:14,lineHeight:1.6}}>
+                  Can't find your product? Enter nutrition facts from the package label.
+                </p>
+
+                {/* Product info */}
+                <div style={{marginBottom:8}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Product Name *</label>
+                  <input className="inp" value={mForm.name}
+                    onChange={e => setM("name", e.target.value)} placeholder="e.g. Great Value Whole Milk" />
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Brand</label>
+                    <input className="inp" value={mForm.brand}
+                      onChange={e => setM("brand", e.target.value)} placeholder="optional" />
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Serving Size (g) *</label>
+                    <input className="inp" type="number" min="0" step="any" value={mForm.servingSize}
+                      onChange={e => setM("servingSize", e.target.value)} placeholder="e.g. 240" />
+                  </div>
+                </div>
+                <div style={{marginBottom:8}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>
+                    Servings per Container{mForm.unit === "each" ? " *" : ""}
+                  </label>
+                  <input className="inp" type="number" min="0" step="any" value={mForm.servingsPerContainer}
+                    onChange={e => setM("servingsPerContainer", e.target.value)}
+                    placeholder={mForm.unit==="each" ? "required for 'each' unit" : "e.g. 8 (optional)"} />
+                  {mForm.unit === "each" && !parseFloat(mForm.servingsPerContainer) && (
+                    <div style={{fontSize:11,color:"var(--warn)",marginTop:3}}>Required when unit is "each"</div>
+                  )}
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>
+                    Product URL <span style={{fontWeight:400,textTransform:"none"}}>(optional — saved for reference, not fetched)</span>
+                  </label>
+                  <input className="inp" value={mForm.url}
+                    onChange={e => setM("url", e.target.value)} placeholder="e.g. walmart.com/ip/..." />
+                </div>
+
+                {/* Nutrition per serving */}
+                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",
+                  color:"var(--mu)",marginBottom:6,paddingTop:8,borderTop:"1px solid var(--bd)"}}>
+                  Nutrition Facts (per serving)
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                  {[
+                    { label:"Calories (kcal)", field:"calories", placeholder:"e.g. 150" },
+                    { label:"Protein (g)",     field:"protein",  placeholder:"e.g. 8"   },
+                    { label:"Total Fat (g)",   field:"fat",      placeholder:"e.g. 8"   },
+                    { label:"Carbs (g)",       field:"carbs",    placeholder:"e.g. 12"  },
+                    { label:"Fiber (g)",       field:"fiber",    placeholder:"e.g. 0"   },
+                    { label:"Sodium (mg)",     field:"sodium",   placeholder:"e.g. 120" },
+                  ].map(({ label, field, placeholder }) => (
+                    <div key={field}>
+                      <label style={{fontSize:10,fontWeight:700,color:"var(--mu)",display:"block",
+                        marginBottom:3,textTransform:"uppercase",letterSpacing:".3px"}}>{label}</label>
+                      <input className="inp" type="number" min="0" step="any"
+                        value={mForm[field]} onChange={e => setM(field, e.target.value)}
+                        placeholder={placeholder} style={{fontSize:12}} />
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
 
-            {/* Selected food */}
-            {selectedFood && (
-              <div style={{background:"var(--pli)",border:"1px solid #E8C9B4",borderRadius:8,
-                padding:"9px 11px",marginBottom:12,fontSize:12}}>
-                <div style={{fontWeight:700,color:"var(--pri)",marginBottom:2}}>✓ Selected</div>
-                <div style={{fontWeight:600,color:"var(--tx)",lineHeight:1.4}}>{selectedFood.description}</div>
-                {(selectedFood.brandName||selectedFood.brandOwner) &&
-                  <div style={{color:"var(--mu)"}}>{selectedFood.brandName||selectedFood.brandOwner}</div>}
-                {selectedFood.servingSize &&
-                  <div style={{color:"var(--mu)"}}>Serving: {selectedFood.servingSize} {selectedFood.servingSizeUnit}</div>}
-              </div>
-            )}
-
-            {/* Qty + Unit */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <div>
-                <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
-                  marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Quantity</label>
-                <input className="inp" type="number" min="0" step="any" value={qty}
-                  onChange={e => setQty(e.target.value)} placeholder="e.g. 16" />
-              </div>
-              <div>
-                <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
-                  marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Unit</label>
-                <select className="inp" value={unit} onChange={e => setUnit(e.target.value)}>
-                  {UNITS.map(u => <option key={u}>{u}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* Price */}
-            <div style={{marginBottom:14}}>
-              <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
-                marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Price Paid ($)</label>
-              <input className="inp" type="number" min="0" step="0.01" value={price}
-                onChange={e => setPrice(e.target.value)} placeholder="e.g. 3.49" />
-            </div>
-
-            {/* Preview */}
-            {est > 0 && (
-              <div style={{background:"#F0EBE0",borderRadius:8,padding:"12px 10px",marginBottom:14,
-                display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,textAlign:"center"}}>
-                <div>
-                  <div style={{fontFamily:"'Lora',serif",fontSize:26,fontWeight:700,color:"var(--tx)"}}>{est}</div>
-                  <div style={{fontSize:10,color:"var(--mu)",fontWeight:700,
-                    textTransform:"uppercase",letterSpacing:".5px"}}>Servings</div>
+                {/* Purchase fields */}
+                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",
+                  color:"var(--mu)",marginBottom:6,paddingTop:8,borderTop:"1px solid var(--bd)"}}>
+                  Purchase Details
                 </div>
-                {cpp && (
-                  <div style={{borderLeft:"1px solid var(--bd)"}}>
-                    <div style={{fontFamily:"'Lora',serif",fontSize:26,fontWeight:700,color:"var(--sec)"}}>${cpp}</div>
-                    <div style={{fontSize:10,color:"var(--mu)",fontWeight:700,
-                      textTransform:"uppercase",letterSpacing:".5px"}}>Per Serving</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Quantity *</label>
+                    <input className="inp" type="number" min="0" step="any" value={mForm.qty}
+                      onChange={e => setM("qty", e.target.value)} placeholder="e.g. 1" />
                   </div>
-                )}
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                      marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Unit *</label>
+                    <select className="inp" value={mForm.unit} onChange={e => setM("unit", e.target.value)}>
+                      {UNITS.map(u => <option key={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
+                    marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Price Paid ($) *</label>
+                  <input className="inp" type="number" min="0" step="0.01" value={mForm.price}
+                    onChange={e => setM("price", e.target.value)} placeholder="e.g. 3.49" />
+                </div>
+
+                <button className="btn" onClick={submitManual} disabled={!manualCanAdd}
+                  style={{background:manualCanAdd?"#4A6FA5":"var(--bd)",
+                    color:manualCanAdd?"white":"var(--mu)",padding:"11px 0",
+                    fontSize:14,width:"100%",opacity:manualCanAdd?1:.7}}>
+                  ✏️ Add to Shopping List
+                </button>
               </div>
             )}
-
-            <button className="btn" onClick={addToList} disabled={!canAdd}
-              style={{background:canAdd?"var(--pri)":"var(--bd)",
-                color:canAdd?"white":"var(--mu)",padding:"11px 0",
-                fontSize:14,width:"100%",opacity:canAdd?1:.7}}>
-              + Add to Shopping List
-            </button>
           </div>
 
           {/* Right: List */}
@@ -740,6 +959,12 @@
                             <div style={{fontSize:11,color:"var(--mu)",marginTop:1}}>
                               Serving: {item.servingSize} {item.servingSizeUnit}
                             </div>
+                            {item.source === "manual" && (
+                              <span style={{fontSize:10,color:"#4A6FA5",background:"#E8EEF7",
+                                borderRadius:3,padding:"1px 5px",display:"inline-block",marginTop:2}}>
+                                ✏️ Manual Entry
+                              </span>
+                            )}
                           </td>
                           <td style={{padding:"11px 14px",color:"var(--tx)",whiteSpace:"nowrap"}}>
                             {item.purchasedQty} {item.purchasedUnit}
@@ -1007,215 +1232,393 @@
     }
 
     /* ── Step 3: Nutritional Summary ────────────────────────────────────── */
-    function Step3({ plans, sex }) {
-      const [view,      setView]      = useState("daily");
-      const [hideEmpty, setHideEmpty] = useState(true);
+    function Step3({ plans, sex, lookupNutrients }) {
+      const [view,       setView]       = useState("daily");
+      const [lookingUp,  setLookingUp]  = useState(new Set());
 
-      const planData = ["thrifty","preferred"].map(planKey => {
+      const divisor = view === "daily" ? 7 : 1;
+
+      // Only show plans that have assigned meal data
+      const activePlanKeys = ["thrifty","preferred"].filter(planKey => {
+        const plan = plans[planKey];
+        return plan.items.some(it => getUsed(plan.meals, it.id) > 0);
+      });
+
+      const hasAnyData = activePlanKeys.length > 0;
+
+      // Build data objects for each active plan
+      const planData = activePlanKeys.map(planKey => {
         const plan      = plans[planKey];
         const assigned  = plan.items.filter(it => getUsed(plan.meals, it.id) > 0);
         const nutrients = calcWeeklyNutrients(plan.items, plan.meals);
-        const totalSpent   = plan.items.reduce((s,i) => s + i.price, 0);
-        const budgetLimit  = planKey === "thrifty" ? BUDGET[sex] : null;
+        const totalSpent  = plan.items.reduce((s,i) => s + i.price, 0);
+        const budgetLimit = planKey === "thrifty" ? BUDGET[sex] : null;
         return { planKey, plan, assigned, nutrients, totalSpent, budgetLimit };
       });
 
-      const divisor    = view === "daily" ? 7 : 1;
-      const hasAnyData = planData.some(p => p.assigned.length > 0);
+      // ── Helpers ────────────────────────────────────────────────────────
 
-      return (
-        <div className="fade-up">
-          {/* Header row */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div>
-              <h2 style={{fontFamily:"'Lora',serif",fontSize:22,fontWeight:700,color:"var(--tx)"}}>
-                Nutritional Summary
-              </h2>
-              <p style={{fontSize:13,color:"var(--mu)",marginTop:3}}>
-                Based on foods assigned in your meal planner, compared against FDA daily values.
-              </p>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <button className="btn" onClick={() => setHideEmpty(h => !h)}
-                style={{background:"white",border:"1.5px solid var(--bd)",color:"var(--mu)",
-                  padding:"6px 12px",fontSize:12,fontWeight:600}}>
-                {hideEmpty ? "Show missing data" : "Hide missing data"}
-              </button>
-              <div style={{display:"flex",gap:4,background:"#EDE7DC",borderRadius:9,padding:3}}>
-                {[["daily","Daily Avg"],["weekly","Weekly Total"]].map(([v,l]) => (
-                  <button key={v} className="tab" onClick={() => setView(v)}
-                    style={{background:view===v?"var(--card)":"transparent",
-                      color:view===v?"var(--tx)":"var(--mu)",
-                      boxShadow:view===v?"0 1px 4px rgba(24,10,0,.1)":"none"}}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+      // Format a nutrient value for display
+      const fmtVal = v =>
+        v == null ? "" :
+        v < 0.1   ? v.toFixed(3) :
+        v < 10    ? v.toFixed(1) :
+        v < 1000  ? v.toFixed(1) :
+        Math.round(v).toLocaleString();
 
-          {!hasAnyData ? (
+      // Resolve a nutrient's display data from the weekly totals
+      const getDisplay = (nutrients, key) => {
+        const d = nutrients[key];
+        if (!d) return { value:null, hasData:false, partial:false, coverage:"" };
+        const { total, itemsWithData, totalAssigned } = d;
+        const hasData = itemsWithData > 0;
+        const val     = hasData ? total / divisor : null;
+        const partial = hasData && itemsWithData < totalAssigned;
+        const coverage = partial
+          ? `${itemsWithData} of ${totalAssigned} items`
+          : (!hasData && totalAssigned > 0) ? `0 of ${totalAssigned} items` : "";
+        return { value:val, hasData, partial, coverage };
+      };
+
+      // Flags — always computed from daily averages regardless of view toggle
+      const getFlags = nutrients => {
+        const daily = key => {
+          const d = nutrients[key];
+          return (d && d.itemsWithData > 0) ? d.total / 7 : null;
+        };
+        const flags = [];
+        const cal    = daily("calories");
+        const fiber  = daily("fiber");
+        const sodium = daily("sodium");
+        if (cal   !== null && cal   < 1000) flags.push({ key:"calories", label:"Low calories",  desc:`avg ${Math.round(cal)} kcal/day`,    dir:"low"  });
+        if (fiber !== null && fiber < 14)   flags.push({ key:"fiber",    label:"Low fiber",     desc:`avg ${fiber.toFixed(1)}g/day`,        dir:"low"  });
+        if (sodium !== null && sodium >= 2300) flags.push({ key:"sodium", label:"High sodium",  desc:`avg ${Math.round(sodium)} mg/day`,    dir:"high" });
+        // Micronutrient completeness flag (blue-gray, shown when ≥ 3 of 6 micros have zero coverage)
+        const microKeys = ["iron","calcium","potassium","vitC","vitD","folate"];
+        const zeroMicros = microKeys.filter(k => !nutrients[k] || nutrients[k].itemsWithData === 0);
+        if (zeroMicros.length >= 3) {
+          flags.push({ key:"micro", label:"Incomplete micronutrient data",
+            desc:`${zeroMicros.length} of 6 micronutrients not reported`, dir:"micro" });
+        }
+        return flags;
+      };
+
+      // Plan-level confidence summary line
+      const getConfidence = (nutrients, assigned) => {
+        const n = assigned.length;
+        if (n === 0) return null;
+        const microKeys = ["iron","calcium","potassium","vitC","vitD","folate"];
+        const partial = microKeys
+          .map(k => {
+            const nut = STEP3_NUTRIENTS.find(x => x.key === k);
+            const d   = nutrients[k];
+            if (!d || !nut || d.itemsWithData === n) return null;
+            return `${nut.label}: ${d.itemsWithData}/${n}`;
+          })
+          .filter(Boolean);
+        if (partial.length === 0) return `${n} item${n!==1?"s":""} assigned · Full nutrient coverage`;
+        const summary = partial.slice(0,3).join(", ") + (partial.length > 3 ? ` +${partial.length-3} more` : "");
+        return `${n} item${n!==1?"s":""} assigned · Micronutrient coverage partial: ${summary}`;
+      };
+
+      // Items eligible for nutrient lookup: real USDA fdcId, assigned, not yet looked up, missing ≥1 micro
+      const getLookupItems = (plan) => {
+        const microNutrients = STEP3_NUTRIENTS.filter(n => n.group === "Micronutrients");
+        return plan.items
+          .filter(item => {
+            if (!getUsed(plan.meals, item.id)) return false;
+            if (!item.fdcId || item.nutrientsLookedUp) return false;
+            if (String(item.fdcId).startsWith("manual_") || String(item.fdcId).startsWith("off_")) return false;
+            return microNutrients.some(n => {
+              const nut = (item.nutrients || []).find(nu => nu.nutrientName === n.name);
+              return !nut || nut.value == null;
+            });
+          });
+      };
+
+      const handleLookup = async (planKey, itemId) => {
+        setLookingUp(prev => new Set([...prev, itemId]));
+        await lookupNutrients(planKey, itemId);
+        setLookingUp(prev => { const s = new Set(prev); s.delete(itemId); return s; });
+      };
+
+      // ── Empty state ────────────────────────────────────────────────────
+      if (!hasAnyData) {
+        return (
+          <div className="fade-up">
+            <h2 style={{fontFamily:"'Lora',serif",fontSize:22,fontWeight:700,
+              color:"var(--tx)",marginBottom:8}}>Nutritional Summary</h2>
             <div style={{background:"var(--card)",borderRadius:"var(--r)",padding:"48px 20px",
               textAlign:"center",color:"var(--mu)",border:"1px solid var(--bd)"}}>
               <div style={{fontSize:36,marginBottom:10}}>📊</div>
               <div style={{fontWeight:700,marginBottom:4,fontSize:15}}>No meals planned yet</div>
               <div style={{fontSize:13}}>Assign food items in Step 2 to see your nutritional summary.</div>
             </div>
-          ) : (
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-              {planData.map(({ planKey, plan, assigned, nutrients, totalSpent, budgetLimit }) => {
-                const isThrifty   = planKey === "thrifty";
-                const overBudget  = isThrifty && totalSpent > budgetLimit;
-                const accentColor = isThrifty ? "var(--pri)" : "var(--sec)";
-                const accentBg    = isThrifty ? "var(--pli)"  : "var(--sli)";
-                const planLabel   = isThrifty ? "🧾 Thrifty Plan" : "✨ Preferred Plan";
-                const totalServings = assigned.reduce((s,it) => s + getUsed(plan.meals, it.id), 0);
+          </div>
+        );
+      }
 
-                return (
-                  <div key={planKey} style={{background:"var(--card)",borderRadius:"var(--r)",
-                    border:"1px solid var(--bd)",boxShadow:"0 2px 12px rgba(24,10,0,.07)",
-                    overflow:"hidden"}}>
+      // ── Main render ────────────────────────────────────────────────────
+      const bothPlans = planData.length === 2;
 
-                    {/* Plan header */}
-                    <div style={{background:accentBg,padding:"14px 18px",borderBottom:"1px solid var(--bd)"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div style={{fontFamily:"'Lora',serif",fontSize:17,fontWeight:700,color:"var(--tx)"}}>
-                          {planLabel}
-                        </div>
-                        <div style={{fontSize:13,fontWeight:700,
-                          color:overBudget?"var(--warn)":accentColor}}>
-                          {$$(totalSpent)}{budgetLimit ? ` / ${$$(budgetLimit)}` : " spent"}
-                          {overBudget && " ⚠️"}
-                        </div>
+      return (
+        <div className="fade-up">
+          {/* Header */}
+          <div style={{display:"flex",justifyContent:"space-between",
+            alignItems:"center",marginBottom:20}}>
+            <div>
+              <h2 style={{fontFamily:"'Lora',serif",fontSize:22,fontWeight:700,color:"var(--tx)"}}>
+                Nutritional Summary
+              </h2>
+              <p style={{fontSize:13,color:"var(--mu)",marginTop:3}}>
+                12 key nutrients · FDA daily values · only items assigned in your meal planner
+              </p>
+            </div>
+            <div style={{display:"flex",gap:4,background:"#EDE7DC",borderRadius:9,padding:3}}>
+              {[["daily","Daily Avg"],["weekly","Weekly Total"]].map(([v,l]) => (
+                <button key={v} className="tab" onClick={() => setView(v)}
+                  style={{background:view===v?"var(--card)":"transparent",
+                    color:view===v?"var(--tx)":"var(--mu)",
+                    boxShadow:view===v?"0 1px 4px rgba(24,10,0,.1)":"none"}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Plan cards */}
+          <div style={{display:"grid",
+            gridTemplateColumns: bothPlans ? "1fr 1fr" : "1fr",
+            gap:20}}>
+
+            {planData.map(({ planKey, plan, assigned, nutrients, totalSpent, budgetLimit }) => {
+              const isThrifty   = planKey === "thrifty";
+              const accentColor = isThrifty ? "var(--pri)" : "var(--sec)";
+              const accentBg    = isThrifty ? "var(--pli)" : "var(--sli)";
+              const planLabel   = isThrifty ? "🧾 Thrifty Plan" : "✨ Preferred Plan";
+              const overBudget  = isThrifty && totalSpent > budgetLimit;
+              const totalServings = assigned.reduce((s,it) => s + getUsed(plan.meals, it.id), 0);
+
+              const flags      = getFlags(nutrients);
+              const confidence = getConfidence(nutrients, assigned);
+              const lookupItems = getLookupItems(plan);
+
+              // % diff shown only on Preferred card when both plans have data
+              const thriftyData = bothPlans ? planData.find(p => p.planKey === "thrifty") : null;
+              const showDiff    = bothPlans && !isThrifty;
+
+              return (
+                <div key={planKey}
+                  style={{background:"var(--card)",borderRadius:"var(--r)",
+                    border:"1px solid var(--bd)",
+                    boxShadow:"0 2px 12px rgba(24,10,0,.07)",overflow:"hidden"}}>
+
+                  {/* Plan header */}
+                  <div style={{background:accentBg,padding:"14px 18px",
+                    borderBottom:"1px solid var(--bd)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{fontFamily:"'Lora',serif",fontSize:17,fontWeight:700,color:"var(--tx)"}}>
+                        {planLabel}
                       </div>
-                      <div style={{fontSize:12,color:"var(--mu)",marginTop:4}}>
-                        {assigned.length} item{assigned.length!==1?"s":""} · {totalServings} total servings planned
+                      <div style={{fontSize:13,fontWeight:700,
+                        color:overBudget?"var(--warn)":accentColor}}>
+                        {$$(totalSpent)}{budgetLimit ? ` / ${$$(budgetLimit)}` : " spent"}
+                        {overBudget && " ⚠️"}
                       </div>
                     </div>
+                    <div style={{fontSize:12,color:"var(--mu)",marginTop:4}}>
+                      {assigned.length} item{assigned.length!==1?"s":""} · {totalServings} total servings planned
+                    </div>
+                  </div>
 
-                    {assigned.length === 0 ? (
-                      <div style={{padding:"32px 18px",textAlign:"center",color:"var(--mu)",fontSize:13}}>
-                        No meals assigned for this plan yet.
-                      </div>
-                    ) : (
-                      <div style={{padding:"16px 18px 12px"}}>
-                        {NUTRIENT_GROUPS.map(group => {
-                          const visible = hideEmpty
-                            ? group.nutrients.filter(n => nutrients[n.key].itemsWithData > 0)
-                            : group.nutrients;
-                          if (visible.length === 0) return null;
-                          return (
-                            <div key={group.label} style={{marginBottom:6}}>
-                              {/* Group header */}
-                              <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",
-                                letterSpacing:"1.2px",color:"var(--mu)",
-                                paddingBottom:6,marginBottom:10,marginTop:6,
-                                borderBottom:"1px solid var(--bd)"}}>
-                                {group.label}
-                              </div>
-                              {visible.map(n => {
-                                const weeklyVal  = nutrients[n.key].total;
-                                const displayVal = weeklyVal / divisor;
-                                const pct        = n.rda > 0 ? (displayVal / n.rda) * 100 : 0;
-                                const hasData    = nutrients[n.key].itemsWithData > 0;
+                  <div style={{padding:"14px 18px"}}>
 
-                                const barColor = !hasData ? "var(--bd)" :
-                                                 pct>150  ? "var(--warn)" :
-                                                 pct>110  ? "var(--acc)"  :
-                                                 pct>=80  ? "var(--sec)"  : "#BBBBBB";
-
-                                const pctText = !hasData  ? "No data" :
-                                                pct > 150 ? `${Math.round(pct)}% ⚠` :
-                                                            `${Math.round(pct)}%`;
-
-                                const pctColor = !hasData ? "var(--mu)"   :
-                                                 pct>150  ? "var(--warn)" :
-                                                 pct>110  ? "var(--low)"  :
-                                                 pct>=80  ? "var(--sec)"  : "var(--mu)";
-
-                                // Smart number formatting: tiny values (B12, selenium) need decimals
-                                const fmt = v =>
-                                  v === 0    ? "0" :
-                                  v < 0.1    ? v.toFixed(3) :
-                                  v < 10     ? v.toFixed(2) :
-                                  v < 100    ? v.toFixed(1) :
-                                              Math.round(v).toLocaleString();
-
-                                return (
-                                  <div key={n.key} style={{marginBottom:12}}>
-                                    <div style={{display:"flex",justifyContent:"space-between",
-                                      alignItems:"baseline",marginBottom:3}}>
-                                      <span style={{fontSize:12,fontWeight:600,
-                                        color:hasData?"var(--tx)":"var(--mu)"}}>
-                                        {n.label}
-                                      </span>
-                                      <span style={{display:"flex",gap:5,alignItems:"baseline"}}>
-                                        {hasData ? (
-                                          <>
-                                            <span style={{fontFamily:"'Lora',serif",fontSize:14,
-                                              fontWeight:700,color:"var(--tx)"}}>
-                                              {fmt(displayVal)}
-                                              <span style={{fontSize:10,fontWeight:400,
-                                                color:"var(--mu)",marginLeft:1}}>{n.unit}</span>
-                                            </span>
-                                            <span style={{fontSize:10,color:"var(--mu)"}}>
-                                              / {fmt(n.rda)} {n.unit}
-                                            </span>
-                                          </>
-                                        ) : (
-                                          <span style={{fontSize:11,color:"var(--mu)",fontStyle:"italic"}}>
-                                            No data
-                                          </span>
-                                        )}
-                                      </span>
-                                    </div>
-                                    <div style={{height:5,borderRadius:3,background:"#EDE7DC",overflow:"hidden"}}>
-                                      {hasData ? (
-                                        <div style={{height:"100%",borderRadius:3,
-                                          width:`${Math.min(pct,100)}%`,
-                                          background:barColor,transition:"width .4s ease"}} />
-                                      ) : (
-                                        <div style={{height:"100%",borderRadius:3,width:"100%",
-                                          background:"repeating-linear-gradient(90deg,#EDE7DC 0,#EDE7DC 5px,#DDD3C5 5px,#DDD3C5 10px)"}} />
-                                      )}
-                                    </div>
-                                    <div style={{fontSize:10,color:pctColor,marginTop:2,textAlign:"right",
-                                      fontWeight:(hasData&&(pct>110||pct<80))?600:400}}>
-                                      {pctText} of daily goal
-                                      {view==="weekly" && hasData &&
-                                        <span style={{color:"var(--mu)",fontWeight:400}}>
-                                          {" "}· {fmt(weeklyVal)} {n.unit} this week
-                                        </span>}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-
-                        {/* Missing data note when showing all */}
-                        {!hideEmpty && NUTRIENTS.some(n => nutrients[n.key].itemsWithData === 0) && (
-                          <div style={{background:"var(--ali)",border:"1px solid #EDD8A0",
-                            borderRadius:7,padding:"8px 11px",marginTop:8,
-                            fontSize:11,color:"#7A5600",lineHeight:1.55}}>
-                            ⚠ Hatched bars = no data available. Common for vitamins and minerals
-                            in branded/packaged items. USDA whole-food entries tend to have better coverage.
-                          </div>
-                        )}
+                    {/* Confidence summary */}
+                    {confidence && (
+                      <div style={{fontSize:11,color:"var(--mu)",marginBottom:10,
+                        background:"#F5F0E8",borderRadius:6,padding:"6px 10px",lineHeight:1.5}}>
+                        📋 {confidence}
                       </div>
                     )}
+
+                    {/* Flag banner */}
+                    {flags.length > 0 && (
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+                        {flags.map(flag => (
+                          <span key={flag.key} style={{
+                            background: flag.dir==="micro" ? "#E8EEF7" : "var(--ali)",
+                            color:      flag.dir==="micro" ? "#4A6FA5" : "var(--low)",
+                            border:     `1px solid ${flag.dir==="micro" ? "#B0C4E0" : "#EDD8A0"}`,
+                            borderRadius:6,padding:"4px 9px",fontSize:11,fontWeight:600}}>
+                            {flag.dir==="micro" ? "ℹ" : "!"} {flag.label} — {flag.desc}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Nutrient groups */}
+                    {[
+                      { label:"Macronutrients", group:"Macronutrients" },
+                      { label:"Micronutrients",  group:"Micronutrients" },
+                    ].map(grp => {
+                      const grpNutrients = STEP3_NUTRIENTS.filter(n => n.group === grp.group);
+                      return (
+                        <div key={grp.group} style={{marginBottom:16}}>
+                          <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",
+                            letterSpacing:"1.2px",color:"var(--mu)",
+                            paddingBottom:6,marginBottom:8,borderBottom:"1px solid var(--bd)"}}>
+                            {grp.label}
+                          </div>
+
+                          {grpNutrients.map(n => {
+                            const { value, hasData, partial, coverage } = getDisplay(nutrients, n.key);
+                            const pct = hasData ? (value / n.rda) * 100 : 0;
+
+                            // Inline row flag (amber)
+                            const rowFlag = flags.find(f => f.key === n.key);
+
+                            // % diff vs Thrifty (shown on Preferred card only)
+                            let diffEl = null;
+                            if (showDiff && thriftyData) {
+                              const tDisp = getDisplay(thriftyData.nutrients, n.key);
+                              if (hasData && tDisp.hasData && tDisp.value !== 0) {
+                                const diffPct = Math.round(((value - tDisp.value) / tDisp.value) * 100);
+                                const pos = diffPct >= 0;
+                                diffEl = (
+                                  <span style={{fontSize:10,fontWeight:600,marginLeft:4,
+                                    color: pos ? "var(--sec)" : "var(--warn)"}}>
+                                    {pos ? "+" : ""}{diffPct}% vs Thrifty
+                                  </span>
+                                );
+                              }
+                            }
+
+                            // Bar color: amber for flagged, green for ≥80%, light gray otherwise
+                            const barColor = !hasData  ? "var(--bd)" :
+                              rowFlag               ? "var(--acc)" :
+                              pct >= 80             ? "var(--sec)" : "#C8C0B4";
+
+                            return (
+                              <div key={n.key} style={{marginBottom:11}}>
+                                {/* Label row */}
+                                <div style={{display:"flex",justifyContent:"space-between",
+                                  alignItems:"baseline",marginBottom:2,flexWrap:"wrap",gap:4}}>
+                                  <span style={{fontSize:12,fontWeight:600,
+                                    color:hasData?"var(--tx)":"var(--mu)"}}>
+                                    {n.label}
+                                  </span>
+                                  <span style={{display:"flex",gap:4,alignItems:"baseline",
+                                    flexWrap:"wrap",justifyContent:"flex-end"}}>
+                                    {hasData ? (
+                                      <>
+                                        <span style={{fontFamily:"'Lora',serif",fontSize:13,
+                                          fontWeight:700,color:"var(--tx)"}}>
+                                          {partial && <span style={{color:"var(--acc)"}}>~</span>}
+                                          {fmtVal(value)}
+                                          <span style={{fontSize:10,fontWeight:400,
+                                            color:"var(--mu)",marginLeft:1}}>{n.unit}</span>
+                                        </span>
+                                        <span style={{fontSize:10,color:"var(--mu)"}}>
+                                          / {fmtVal(n.rda)}{n.unit}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span style={{fontSize:11,color:"var(--mu)",fontStyle:"italic"}}>
+                                        Not reported
+                                      </span>
+                                    )}
+                                    {rowFlag && hasData && (
+                                      <span style={{fontSize:10,background:"var(--ali)",
+                                        color:"var(--low)",border:"1px solid #EDD8A0",
+                                        borderRadius:4,padding:"1px 5px",fontWeight:600}}>
+                                        {rowFlag.dir==="high" ? "↑ high" : "↓ low"}
+                                      </span>
+                                    )}
+                                    {diffEl}
+                                  </span>
+                                </div>
+
+                                {/* Progress bar */}
+                                <div style={{height:5,borderRadius:3,background:"#EDE7DC",overflow:"hidden"}}>
+                                  {hasData ? (
+                                    <div style={{height:"100%",borderRadius:3,
+                                      width:`${Math.min(pct,100)}%`,
+                                      background:barColor,transition:"width .4s ease"}} />
+                                  ) : (
+                                    <div style={{height:"100%",borderRadius:3,width:"100%",
+                                      background:"repeating-linear-gradient(90deg,#EDE7DC 0,#EDE7DC 5px,#DDD3C5 5px,#DDD3C5 10px)"}} />
+                                  )}
+                                </div>
+
+                                {/* Sub-row: coverage note + % of goal */}
+                                <div style={{display:"flex",justifyContent:"space-between",
+                                  fontSize:10,color:"var(--mu)",marginTop:2}}>
+                                  <span>
+                                    {partial && (
+                                      <span style={{color:"#C07A00"}}>~ based on {coverage}</span>
+                                    )}
+                                    {!hasData && coverage && (
+                                      <span>Not reported by any assigned item</span>
+                                    )}
+                                  </span>
+                                  <span>
+                                    {hasData && `${Math.round(pct)}% of ${view==="weekly"?"weekly":"daily"} goal`}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+
+                    {/* Nutrient lookup section */}
+                    {lookupItems.length > 0 && (
+                      <div style={{background:"#F5F0E8",borderRadius:8,
+                        padding:"10px 12px",marginTop:4,marginBottom:4}}>
+                        <div style={{fontSize:11,fontWeight:700,color:"var(--mu)",marginBottom:4}}>
+                          ↻ Fetch missing micronutrients
+                        </div>
+                        <div style={{fontSize:11,color:"var(--mu)",marginBottom:8,lineHeight:1.5}}>
+                          These items have full USDA data available but haven't fetched micronutrients yet.
+                        </div>
+                        {lookupItems.map(item => (
+                          <div key={item.id}
+                            style={{display:"flex",justifyContent:"space-between",
+                              alignItems:"center",marginBottom:5,gap:8}}>
+                            <span style={{fontSize:12,color:"var(--tx)",fontWeight:500,
+                              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                              {item.name.split(",")[0].substring(0,34)}
+                              {item.name.split(",")[0].length > 34 ? "…" : ""}
+                            </span>
+                            <button className="btn"
+                              onClick={() => handleLookup(planKey, item.id)}
+                              disabled={lookingUp.has(item.id)}
+                              style={{flexShrink:0,
+                                background:lookingUp.has(item.id)?"var(--bd)":"white",
+                                color:lookingUp.has(item.id)?"var(--mu)":"var(--pri)",
+                                border:"1px solid var(--bd)",
+                                padding:"3px 10px",fontSize:11,fontWeight:600}}>
+                              {lookingUp.has(item.id) ? "Fetching…" : "↻ Look up"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              );
+            })}
+          </div>
 
           {/* Disclaimer */}
-          <div style={{marginTop:16,fontSize:11,color:"var(--mu)",textAlign:"center",lineHeight:1.6}}>
+          <div style={{marginTop:16,fontSize:11,color:"var(--mu)",
+            textAlign:"center",lineHeight:1.7}}>
             RDA benchmarks: FDA Daily Values for a 2,000 kcal diet ·
             Nutrient totals reflect only items assigned in the Meal Planner ·
-            Values are estimates and may vary by brand or preparation method
+            ~ indicates partial coverage (some items did not report this nutrient) ·
+            "Not reported" means no assigned item provided this value
           </div>
         </div>
       );
@@ -1276,46 +1679,51 @@
           setSearching(true);
           try {
             const [usdaRes, offRes] = await Promise.all([
-              fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=16&api_key=${USDA_KEY}`),
-              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=16&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
+              // pageSize=20 ensures enough results to find 4 quality items per USDA tier after partitioning.
+              fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=20&api_key=${USDA_KEY}`),
+              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=8&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
             ]);
             const [usdaData, offData] = await Promise.all([usdaRes.json(), offRes.json()]);
 
-            const wholeFoodQuery = looksLikeWholeFoodQuery(query);
+            // Score a food item for ordering within its tier (preserves existing quality signals).
+            const scoreFood = (food) => {
+              const name  = food.description || "";
+              const brand = food.brandName || food.brandOwner || "";
+              let score   = scoreMatch(query, name);
+              if (brand) score += Math.min(16, scoreMatch(query, brand) * 0.2);
+              if (isCommonFood(name)) score += 10;
+              if ((food.foodNutrients || food.nutrients || []).length >= 4) score += 6;
+              if ((food.servingSize || 0) > 0) score += 4;
+              return score;
+            };
 
-            const usdaFoods = (usdaData.foods || [])
-              .map(normalizeUSDAFood);
+            // Partition USDA results by tier, score within each tier, take top 4.
+            // Foundation + SR Legacy = "generic" — lab-analyzed, full nutrient profile (40+ nutrients).
+            // Branded Food          = "branded" — exact label data, spottier micronutrients.
+            // Survey (FNDDS) and others are dropped — not useful in this context.
+            const allUsda = (usdaData.foods || []).map(normalizeUSDAFood);
+            const genericFoods = allUsda
+              .filter(f => f.dataType === "Foundation" || f.dataType === "SR Legacy")
+              .map(f => ({ ...f, tier: "generic", _score: scoreFood(f) }))
+              .sort((a, b) => b._score - a._score)
+              .slice(0, 4);
+            const brandedFoods = allUsda
+              .filter(f => f.dataType === "Branded Food")
+              .map(f => ({ ...f, tier: "branded", _score: scoreFood(f) }))
+              .sort((a, b) => b._score - a._score)
+              .slice(0, 4);
 
             const offFoods = (offData.products || [])
               .filter(filterOFFProduct)
-              .map(normalizeOFF);
-
-            const ranked = dedupeFoods([...usdaFoods, ...offFoods])
-              .map(food => {
-                const name = food.description || "";
-                const brand = food.brandName || food.brandOwner || "";
-                let score = scoreMatch(query, name);
-
-                if (brand) score += Math.min(16, scoreMatch(query, brand) * 0.2);
-                if (food.source !== "off") score += 12;
-                if (isCommonFood(name)) score += 10;
-
-                if (wholeFoodQuery) {
-                  if (food.source !== "off" && food.dataType !== "Branded Food") score += 18;
-                  if (food.source === "off") score -= 8;
-                }
-
-                if (food.source === "off" && score < 60) score -= 14;
-                if ((food.foodNutrients || food.nutrients || []).length >= 4) score += 6;
-                if ((food.servingSize || 0) > 0) score += 4;
-
-                return { ...food, _score: score };
-              })
+              .map(p => ({ ...normalizeOFF(p), tier: "off", _score: scoreFood(normalizeOFF(p)) }))
               .sort((a, b) => b._score - a._score)
-              .slice(0, 12);
+              .slice(0, 4);
 
-            setSearchResults(ranked);
-            setShowDropdown(ranked.length > 0);
+            // Merge in tier order: generic first (best nutrient data), branded second, OFF third.
+            // Dedup across tiers in case the same item appears in multiple sources.
+            const merged = dedupeFoods([...genericFoods, ...brandedFoods, ...offFoods]);
+            setSearchResults(merged);
+            setShowDropdown(merged.length > 0);
           } catch(e) {
             console.error("Search error:", e);
             setSearchResults([]);
@@ -1355,6 +1763,63 @@
             }
           } catch(e) { /* silently fall back to search-result nutrients */ }
         }
+      };
+
+      // ── Manual food entry ────────────────────────────────────────────────
+      // Accepts fields from the manual-entry form in Step1.
+      // dataType "Branded Food" tells getNutrientPerServing that values are
+      // already per-serving (students read them off the nutrition label),
+      // so no ×(servingSize/100) scaling is applied — exactly like USDA branded items.
+      const addManualItem = ({ name, brand, url, servingSize, servingsPerContainer,
+                               calories, protein, fat, carbs, fiber, sodium,
+                               qty, unit, price }) => {
+        // Build nutrient array using USDA nutrientName strings so the existing
+        // getNutrientPerServing / calcWeeklyNutrients logic requires zero changes.
+        const nutrients = [
+          calories !== "" ? { nutrientName:"Energy",                       value:parseFloat(calories), unitName:"kcal" } : null,
+          protein  !== "" ? { nutrientName:"Protein",                      value:parseFloat(protein),  unitName:"g"   } : null,
+          fat      !== "" ? { nutrientName:"Total lipid (fat)",            value:parseFloat(fat),      unitName:"g"   } : null,
+          carbs    !== "" ? { nutrientName:"Carbohydrate, by difference",  value:parseFloat(carbs),    unitName:"g"   } : null,
+          fiber    !== "" ? { nutrientName:"Fiber, total dietary",         value:parseFloat(fiber),    unitName:"g"   } : null,
+          sodium   !== "" ? { nutrientName:"Sodium, Na",                   value:parseFloat(sodium),   unitName:"mg"  } : null,
+        ].filter(n => n && !isNaN(n.value));
+
+        // Temporary food-shape object for calcServings — only needs servingSize and
+        // servingsPerContainer; the rest of the stored item is built below.
+        const foodObj = {
+          servingSize:          parseFloat(servingSize),
+          servingSizeUnit:      "g",
+          // When unit is "each", servingsPerContainer is required (enforced in the form).
+          // For weight units it may be null; calcServings falls back to gram math.
+          servingsPerContainer: servingsPerContainer !== "" ? parseFloat(servingsPerContainer) : null,
+          dataType:             "Branded Food",
+        };
+        const servings = calcServings(foodObj, parseFloat(qty), unit);
+        const p = parseFloat(price);
+        setPlans(prev => ({
+          ...prev,
+          [activePlan]: {
+            ...prev[activePlan],
+            items: [...prev[activePlan].items, {
+              id:               Date.now().toString(),
+              fdcId:            "manual_" + Date.now(),
+              name:             name.trim(),
+              brandName:        brand.trim() || "",
+              sourceUrl:        url.trim()   || "", // stored for student reference; never fetched
+              purchasedQty:     parseFloat(qty),
+              purchasedUnit:    unit,
+              price:            p,
+              servingSize:      foodObj.servingSize,
+              servingSizeUnit:  "g",
+              servingsPerContainer: foodObj.servingsPerContainer,
+              totalServings:    servings,
+              costPerServing:   p / servings,
+              dataType:         "Branded Food",
+              source:           "manual",
+              nutrients,
+            }],
+          },
+        }));
       };
 
       const addToList = () => {
@@ -1415,6 +1880,39 @@
           nm[day][meal] = nm[day][meal].filter(e => e.itemId !== itemId);
           return { ...p, [activePlan]: { ...p[activePlan], meals: nm } };
         });
+      };
+
+      // ── Nutrient lookup from Step 3 ──────────────────────────────────────
+      // Re-fetches full nutrient detail for a USDA item that was added without
+      // complete micronutrient data. Silently updates localStorage in place.
+      // Only works for items with a real USDA fdcId (not manual_ or off_ items).
+      const lookupNutrients = async (planKey, itemId) => {
+        const item = plans[planKey]?.items.find(i => i.id === itemId);
+        if (!item?.fdcId || String(item.fdcId).startsWith("manual_") || String(item.fdcId).startsWith("off_")) return;
+        try {
+          const res    = await fetch(`https://api.nal.usda.gov/fdc/v1/food/${item.fdcId}?api_key=${USDA_KEY}`);
+          const detail = await res.json();
+          const fullNutrients = (detail.foodNutrients || [])
+            .map(fn => ({
+              nutrientName: fn.nutrient?.name || fn.nutrientName,
+              value:        fn.amount ?? fn.value,
+              unitName:     fn.nutrient?.unitName || fn.unitName,
+            }))
+            .filter(n => n.nutrientName && n.value != null);
+          if (fullNutrients.length > 0) {
+            setPlans(prev => ({
+              ...prev,
+              [planKey]: {
+                ...prev[planKey],
+                items: prev[planKey].items.map(i =>
+                  // nutrientsLookedUp flag removes item from the lookup section even if
+                  // some micronutrients are genuinely absent from USDA's own data.
+                  i.id === itemId ? { ...i, nutrients: fullNutrients, nutrientsLookedUp: true } : i
+                ),
+              },
+            }));
+          }
+        } catch(e) { /* silent fail — student can retry */ }
       };
 
       const resetPlan = which => {
@@ -1501,6 +1999,7 @@
                 qty={qty} setQty={setQty} unit={unit} setUnit={setUnit}
                 price={price} setPrice={setPrice}
                 addToList={addToList} removeItem={removeItem}
+                addManualItem={addManualItem}
               />
             )}
             {activeStep === 2 && (
@@ -1513,7 +2012,7 @@
               />
             )}
             {activeStep === 3 && (
-              <Step3 plans={plans} sex={sex} />
+              <Step3 plans={plans} sex={sex} lookupNutrients={lookupNutrients} />
             )}
           </div>
 
