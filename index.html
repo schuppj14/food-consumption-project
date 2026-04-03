@@ -161,6 +161,91 @@
 
     const $$ = n => `$${parseFloat(n || 0).toFixed(2)}`;
 
+    const cleanQuery = q =>
+      (q || "").toLowerCase().trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+
+    const COMMON_FOODS = [
+      "apple","banana","orange","grape","strawberry","blueberry","broccoli","spinach",
+      "lettuce","carrot","potato","onion","tomato","pepper","cucumber","rice","pasta",
+      "bread","milk","yogurt","cheese","egg","eggs","chicken","chicken breast","ground beef",
+      "beans","black beans","peanut butter","oats","cereal","tuna","salmon","frozen vegetables"
+    ];
+
+    const STOP_WORDS = new Set(["fresh","organic","large","small","plain","original","store","brand"]);
+
+    const tokenize = str =>
+      cleanQuery(str)
+        .split(" ")
+        .map(t => t.trim())
+        .filter(Boolean)
+        .filter(t => !STOP_WORDS.has(t));
+
+    const scoreMatch = (query, text) => {
+      if (!text) return 0;
+      const q = cleanQuery(query);
+      const t = cleanQuery(text);
+      if (!q || !t) return 0;
+      if (t === q) return 140;
+      if (t.startsWith(q)) return 120;
+      if (t.includes(q)) return 95;
+
+      const qTokens = tokenize(q);
+      const tTokens = tokenize(t);
+      if (!qTokens.length || !tTokens.length) return 0;
+
+      let score = 0;
+      qTokens.forEach(tok => {
+        if (tTokens.includes(tok)) score += 28;
+        else if (t.includes(tok)) score += 18;
+      });
+
+      if (qTokens.length > 1) {
+        const overlap = qTokens.filter(tok => tTokens.includes(tok)).length;
+        score += overlap * 8;
+      }
+
+      return score;
+    };
+
+    const isCommonFood = name => {
+      const nm = cleanQuery(name);
+      return COMMON_FOODS.some(food => nm.includes(food));
+    };
+
+    const looksLikeWholeFoodQuery = query => {
+      const q = cleanQuery(query);
+      return COMMON_FOODS.some(food => q.includes(food)) || tokenize(q).length <= 2;
+    };
+
+    const dedupeFoods = foods => {
+      const seen = new Set();
+      const deduped = [];
+      for (const food of foods) {
+        const name = cleanQuery(food.description || "");
+        const brand = cleanQuery(food.brandName || food.brandOwner || "");
+        const key = `${name}__${brand}`;
+        if (!name || seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(food);
+      }
+      return deduped;
+    };
+
+    const normalizeUSDAFood = f => ({
+      ...f,
+      source: "usda",
+      nutrients: f.foodNutrients || f.nutrients || [],
+    });
+
+    const filterOFFProduct = p => {
+      const name = (p.product_name || p.product_name_en || "").trim();
+      if (!name) return false;
+      const nutriments = p.nutriments || {};
+      const hasCoreNutrition = ["energy-kcal_100g","proteins_100g","fat_100g","carbohydrates_100g"]
+        .some(key => nutriments[key] != null);
+      return hasCoreNutrition || !!p.brands;
+    };
+
     /* Normalize an Open Food Facts product into the same shape as a USDA food */
     const normalizeOFF = p => {
       const nm = p.nutriments || {};
@@ -1179,37 +1264,65 @@
       const overBudget  = activePlan === "thrifty" && totalSpent > budgetLimit;
       const hasSaved    = !!(saved && (saved.thrifty.items.length > 0 || saved.preferred.items.length > 0));
 
-      // USDA food search
+      // Ranked USDA + Open Food Facts search
       useEffect(() => {
-        if (!searchQuery.trim() || searchQuery.length < 2) {
+        const query = searchQuery.trim();
+        if (!query || query.length < 2) {
           setSearchResults([]); setShowDropdown(false); return;
         }
+
         clearTimeout(debRef.current);
         debRef.current = setTimeout(async () => {
           setSearching(true);
           try {
             const [usdaRes, offRes] = await Promise.all([
-              fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(searchQuery)}&pageSize=6&api_key=${USDA_KEY}`),
-              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(searchQuery)}&search_simple=1&action=process&json=1&page_size=6&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
+              fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=16&api_key=${USDA_KEY}`),
+              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=16&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
             ]);
             const [usdaData, offData] = await Promise.all([usdaRes.json(), offRes.json()]);
 
+            const wholeFoodQuery = looksLikeWholeFoodQuery(query);
+
             const usdaFoods = (usdaData.foods || [])
-              .slice(0, 5)
-              .map(f => ({ ...f, source: "usda" }));
+              .map(normalizeUSDAFood);
 
             const offFoods = (offData.products || [])
-              .filter(p => (p.product_name || p.product_name_en || "").trim())
-              .slice(0, 5)
+              .filter(filterOFFProduct)
               .map(normalizeOFF);
 
-            setSearchResults([...usdaFoods, ...offFoods]);
-            setShowDropdown(true);
+            const ranked = dedupeFoods([...usdaFoods, ...offFoods])
+              .map(food => {
+                const name = food.description || "";
+                const brand = food.brandName || food.brandOwner || "";
+                let score = scoreMatch(query, name);
+
+                if (brand) score += Math.min(16, scoreMatch(query, brand) * 0.2);
+                if (food.source !== "off") score += 12;
+                if (isCommonFood(name)) score += 10;
+
+                if (wholeFoodQuery) {
+                  if (food.source !== "off" && food.dataType !== "Branded Food") score += 18;
+                  if (food.source === "off") score -= 8;
+                }
+
+                if (food.source === "off" && score < 60) score -= 14;
+                if ((food.foodNutrients || food.nutrients || []).length >= 4) score += 6;
+                if ((food.servingSize || 0) > 0) score += 4;
+
+                return { ...food, _score: score };
+              })
+              .sort((a, b) => b._score - a._score)
+              .slice(0, 12);
+
+            setSearchResults(ranked);
+            setShowDropdown(ranked.length > 0);
           } catch(e) {
             console.error("Search error:", e);
             setSearchResults([]);
+            setShowDropdown(false);
           } finally { setSearching(false); }
-        }, 480);
+        }, 420);
+
         return () => clearTimeout(debRef.current);
       }, [searchQuery]);
 
