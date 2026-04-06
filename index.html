@@ -173,228 +173,180 @@
 
     // ── Food lookup table ────────────────────────────────────────────────────
     // Maps casual student search terms → exact USDA SR Legacy / Foundation
-    // description strings. When a query matches, we fire an extra targeted USDA
-    // search for that description and pin the results to the top of the Generic
-    // tier, guaranteeing the obvious match always surfaces.
-    // Keys are lowercase; values are the USDA description to query directly.
+    // description strings. When a query matches, a targeted USDA call fires in
+    // parallel and those results are pinned to the top of the Generic tier.
+    // When the lookup fires AND USDA generic returns ≥3 results, OFF is skipped
+    // entirely to avoid noise (e.g., 40 brands of milk drowning out "Milk, whole").
     const FOOD_LOOKUP = {
       // Dairy & Eggs
-      "milk":               "Milk, whole",
-      "whole milk":         "Milk, whole",
-      "2% milk":            "Milk, reduced fat, fluid, 2% milkfat",
-      "skim milk":          "Milk, nonfat, fluid",
-      "nonfat milk":        "Milk, nonfat, fluid",
-      "chocolate milk":     "Milk, chocolate, fluid, commercial, whole",
-      "powdered milk":      "Milk, dry, whole, without added vitamin D",
-      "evaporated milk":    "Milk, canned, evaporated, without added vitamin D",
-      "condensed milk":     "Milk, canned, condensed, sweetened",
-      "butter":             "Butter, salted",
-      "margarine":          "Margarine, regular, hard, soybean",
-      "cream cheese":       "Cheese, cream",
-      "sour cream":         "Cream, sour, cultured",
-      "cottage cheese":     "Cheese, cottage, creamed, large or small curd",
-      "cheddar cheese":     "Cheese, cheddar",
-      "mozzarella":         "Cheese, mozzarella, whole milk",
-      "mozzarella cheese":  "Cheese, mozzarella, whole milk",
-      "american cheese":    "Cheese, American, processed",
-      "cheese":             "Cheese, cheddar",
-      "eggs":               "Egg, whole, raw, fresh",
-      "egg":                "Egg, whole, raw, fresh",
-      "hard boiled eggs":   "Egg, whole, cooked, hard-boiled",
-      "yogurt":             "Yogurt, plain, whole milk",
-      "greek yogurt":       "Yogurt, Greek, plain, whole milk",
-      "plain yogurt":       "Yogurt, plain, whole milk",
-
+      "milk":"Milk, whole","whole milk":"Milk, whole",
+      "2% milk":"Milk, reduced fat, fluid, 2% milkfat",
+      "skim milk":"Milk, nonfat, fluid","nonfat milk":"Milk, nonfat, fluid",
+      "chocolate milk":"Milk, chocolate, fluid, commercial, whole",
+      "powdered milk":"Milk, dry, whole, without added vitamin D",
+      "evaporated milk":"Milk, canned, evaporated, without added vitamin D",
+      "condensed milk":"Milk, canned, condensed, sweetened",
+      "butter":"Butter, salted","margarine":"Margarine, regular, hard, soybean",
+      "cream cheese":"Cheese, cream","sour cream":"Cream, sour, cultured",
+      "cottage cheese":"Cheese, cottage, creamed, large or small curd",
+      "cheddar cheese":"Cheese, cheddar","cheddar":"Cheese, cheddar",
+      "mozzarella":"Cheese, mozzarella, whole milk",
+      "mozzarella cheese":"Cheese, mozzarella, whole milk",
+      "american cheese":"Cheese, American, processed","cheese":"Cheese, cheddar",
+      "eggs":"Egg, whole, raw, fresh","egg":"Egg, whole, raw, fresh",
+      "hard boiled eggs":"Egg, whole, cooked, hard-boiled",
+      "yogurt":"Yogurt, plain, whole milk","greek yogurt":"Yogurt, Greek, plain, whole milk",
+      "plain yogurt":"Yogurt, plain, whole milk",
       // Proteins — Meat & Poultry
-      "chicken breast":     "Chicken, broilers or fryers, breast, meat only, raw",
-      "chicken thigh":      "Chicken, broilers or fryers, thigh, meat only, raw",
-      "chicken leg":        "Chicken, broilers or fryers, leg, meat only, raw",
-      "chicken wings":      "Chicken, broilers or fryers, wing, meat only, raw",
-      "whole chicken":      "Chicken, broilers or fryers, meat and skin, raw",
-      "chicken":            "Chicken, broilers or fryers, meat only, raw",
-      "ground beef":        "Beef, ground, 80% lean meat / 20% fat, raw",
-      "ground turkey":      "Turkey, ground, raw",
-      "beef steak":         "Beef, loin, top sirloin steak, separable lean only, raw",
-      "sirloin":            "Beef, loin, top sirloin steak, separable lean only, raw",
-      "chuck roast":        "Beef, chuck, arm pot roast, separable lean only, raw",
-      "pork chop":          "Pork, fresh, loin, center loin (chops), bone-in, separable lean only, raw",
-      "pork loin":          "Pork, fresh, loin, whole, separable lean only, raw",
-      "bacon":              "Pork, cured, bacon, raw",
-      "ham":                "Pork, cured, ham, whole, separable lean only, raw",
-      "sausage":            "Pork, fresh, variety meats and by-products, chitterlings, raw",
-      "hot dogs":           "Frankfurter, beef",
-      "spam":               "Pork, cured, canned",
-      "vienna sausages":    "Frankfurter, chicken",
-      "vienna sausage":     "Frankfurter, chicken",
-      "corned beef hash":   "Beef, corned, canned",
-      "canned corned beef": "Beef, corned, canned",
-
-      // Proteins — Seafood
-      "tuna":               "Fish, tuna, light, canned in water, drained solids",
-      "canned tuna":        "Fish, tuna, light, canned in water, drained solids",
-      "canned salmon":      "Fish, salmon, pink, canned, drained solids",
-      "sardines":           "Fish, sardine, Atlantic, canned in oil, drained solids with bone",
-
-      // Proteins — Plant-based
-      "black beans":        "Beans, black, mature seeds, raw",
-      "kidney beans":       "Beans, kidney, red, mature seeds, raw",
-      "pinto beans":        "Beans, pinto, mature seeds, raw",
-      "chickpeas":          "Chickpeas (garbanzo beans, bengal gram), mature seeds, raw",
-      "garbanzo beans":     "Chickpeas (garbanzo beans, bengal gram), mature seeds, raw",
-      "lentils":            "Lentils, raw",
-      "dried lentils":      "Lentils, raw",
-      "split peas":         "Peas, split, mature seeds, raw",
-      "dried beans":        "Beans, navy, mature seeds, raw",
-      "refried beans":      "Beans, baked, canned, plain or vegetarian",
-      "baked beans":        "Beans, baked, canned, plain or vegetarian",
-      "pork and beans":     "Beans, baked, canned, with pork",
-      "canned beans":       "Beans, baked, canned, plain or vegetarian",
-      "tofu":               "Tofu, raw, firm, prepared with calcium sulfate",
-      "peanut butter":      "Peanut butter, smooth style, without salt",
-      "peanuts":            "Peanuts, all types, raw",
-      "sunflower seeds":    "Seeds, sunflower seed kernels, raw",
-
+      "chicken breast":"Chicken, broilers or fryers, breast, meat only, raw",
+      "chicken thigh":"Chicken, broilers or fryers, thigh, meat only, raw",
+      "chicken leg":"Chicken, broilers or fryers, leg, meat only, raw",
+      "chicken wings":"Chicken, broilers or fryers, wing, meat only, raw",
+      "whole chicken":"Chicken, broilers or fryers, meat and skin, raw",
+      "chicken":"Chicken, broilers or fryers, meat only, raw",
+      "ground beef":"Beef, ground, 80% lean meat / 20% fat, raw",
+      "ground turkey":"Turkey, ground, raw",
+      "beef steak":"Beef, loin, top sirloin steak, separable lean only, raw",
+      "sirloin":"Beef, loin, top sirloin steak, separable lean only, raw",
+      "chuck roast":"Beef, chuck, arm pot roast, separable lean only, raw",
+      "pork chop":"Pork, fresh, loin, center loin (chops), bone-in, separable lean only, raw",
+      "pork loin":"Pork, fresh, loin, whole, separable lean only, raw",
+      "bacon":"Pork, cured, bacon, raw","ham":"Pork, cured, ham, whole, separable lean only, raw",
+      "sausage":"Pork, fresh, variety meats and by-products, chitterlings, raw",
+      "hot dogs":"Frankfurter, beef","spam":"Pork, cured, canned",
+      "vienna sausages":"Frankfurter, chicken","vienna sausage":"Frankfurter, chicken",
+      "corned beef hash":"Beef, corned, canned","canned corned beef":"Beef, corned, canned",
+      // Seafood
+      "tuna":"Fish, tuna, light, canned in water, drained solids",
+      "canned tuna":"Fish, tuna, light, canned in water, drained solids",
+      "canned salmon":"Fish, salmon, pink, canned, drained solids",
+      "sardines":"Fish, sardine, Atlantic, canned in oil, drained solids with bone",
+      // Plant proteins
+      "black beans":"Beans, black, mature seeds, raw",
+      "kidney beans":"Beans, kidney, red, mature seeds, raw",
+      "pinto beans":"Beans, pinto, mature seeds, raw",
+      "chickpeas":"Chickpeas (garbanzo beans, bengal gram), mature seeds, raw",
+      "garbanzo beans":"Chickpeas (garbanzo beans, bengal gram), mature seeds, raw",
+      "lentils":"Lentils, raw","dried lentils":"Lentils, raw",
+      "split peas":"Peas, split, mature seeds, raw",
+      "dried beans":"Beans, navy, mature seeds, raw",
+      "refried beans":"Beans, baked, canned, plain or vegetarian",
+      "baked beans":"Beans, baked, canned, plain or vegetarian",
+      "pork and beans":"Beans, baked, canned, with pork",
+      "canned beans":"Beans, baked, canned, plain or vegetarian",
+      "tofu":"Tofu, raw, firm, prepared with calcium sulfate",
+      "peanut butter":"Peanut butter, smooth style, without salt",
+      "peanuts":"Peanuts, all types, raw",
+      "sunflower seeds":"Seeds, sunflower seed kernels, raw",
       // Grains & Bread
-      "bread":              "Bread, whole-wheat, commercially prepared",
-      "white bread":        "Bread, white, commercially prepared",
-      "whole wheat bread":  "Bread, whole-wheat, commercially prepared",
-      "rolls":              "Rolls, dinner, plain, commercially prepared",
-      "tortillas":          "Tortillas, ready-to-bake or -fry, flour, refrigerated",
-      "flour tortillas":    "Tortillas, ready-to-bake or -fry, flour, refrigerated",
-      "corn tortillas":     "Tortillas, ready-to-bake or -fry, corn",
-      "rice":               "Rice, white, long-grain, regular, unenriched, raw",
-      "white rice":         "Rice, white, long-grain, regular, unenriched, raw",
-      "brown rice":         "Rice, brown, long-grain, raw",
-      "instant rice":       "Rice, white, long-grain, regular, cooked",
-      "pasta":              "Pasta, dry, unenriched",
-      "spaghetti":          "Pasta, dry, unenriched",
-      "macaroni":           "Macaroni, dry, unenriched",
-      "egg noodles":        "Noodles, egg, dry, unenriched",
-      "ramen":              "Noodles, chinese, chow mein",
-      "instant noodles":    "Noodles, chinese, chow mein",
-      "instant ramen":      "Noodles, chinese, chow mein",
-      "ramen noodles":      "Noodles, chinese, chow mein",
-      "cup noodles":        "Noodles, chinese, chow mein",
-      "rice noodles":       "Noodles, chinese, cellophane or long rice (mung beans), dry",
-      "lo mein noodles":    "Noodles, chinese, chow mein",
-      "oats":               "Oats",
-      "oatmeal":            "Cereals, oats, regular and quick, not fortified, dry",
-      "instant oatmeal":    "Cereals, oats, regular and quick, not fortified, dry",
-      "grits":              "Cereals, grits, white corn, regular and quick, unenriched, dry",
-      "cornmeal":           "Cornmeal, degermed, enriched, yellow",
-      "flour":              "Wheat flour, white, all-purpose, enriched, bleached",
-      "white flour":        "Wheat flour, white, all-purpose, enriched, bleached",
-      "whole wheat flour":  "Wheat flour, white, whole-grain",
-      "cereal":             "Cereals, corn flakes, plain",
-      "crackers":           "Crackers, saltines, unsalted tops",
-      "saltine crackers":   "Crackers, saltines, unsalted tops",
-      "graham crackers":    "Crackers, graham, plain or honey",
-      "popcorn":            "Popcorn, air-popped",
-      "pretzels":           "Pretzels, hard, plain, salted",
-      "pancake mix":        "Pancakes, plain, dry mix, complete",
-      "cornbread mix":      "Bread, cornbread, dry mix, enriched",
-      "mac and cheese":     "Macaroni, dry, unenriched",
+      "bread":"Bread, whole-wheat, commercially prepared",
+      "white bread":"Bread, white, commercially prepared",
+      "whole wheat bread":"Bread, whole-wheat, commercially prepared",
+      "rolls":"Rolls, dinner, plain, commercially prepared",
+      "tortillas":"Tortillas, ready-to-bake or -fry, flour, refrigerated",
+      "flour tortillas":"Tortillas, ready-to-bake or -fry, flour, refrigerated",
+      "corn tortillas":"Tortillas, ready-to-bake or -fry, corn",
+      "rice":"Rice, white, long-grain, regular, unenriched, raw",
+      "white rice":"Rice, white, long-grain, regular, unenriched, raw",
+      "brown rice":"Rice, brown, long-grain, raw",
+      "instant rice":"Rice, white, long-grain, regular, cooked",
+      "pasta":"Pasta, dry, unenriched","spaghetti":"Pasta, dry, unenriched",
+      "macaroni":"Macaroni, dry, unenriched",
+      "egg noodles":"Noodles, egg, dry, unenriched",
+      "ramen":"Noodles, chinese, chow mein",
+      "instant noodles":"Noodles, chinese, chow mein",
+      "instant ramen":"Noodles, chinese, chow mein",
+      "ramen noodles":"Noodles, chinese, chow mein",
+      "cup noodles":"Noodles, chinese, chow mein",
+      "rice noodles":"Noodles, chinese, cellophane or long rice (mung beans), dry",
+      "lo mein noodles":"Noodles, chinese, chow mein",
+      "oats":"Oats","oatmeal":"Cereals, oats, regular and quick, not fortified, dry",
+      "instant oatmeal":"Cereals, oats, regular and quick, not fortified, dry",
+      "grits":"Cereals, grits, white corn, regular and quick, unenriched, dry",
+      "cornmeal":"Cornmeal, degermed, enriched, yellow",
+      "flour":"Wheat flour, white, all-purpose, enriched, bleached",
+      "white flour":"Wheat flour, white, all-purpose, enriched, bleached",
+      "whole wheat flour":"Wheat flour, white, whole-grain",
+      "cereal":"Cereals, corn flakes, plain",
+      "crackers":"Crackers, saltines, unsalted tops",
+      "saltine crackers":"Crackers, saltines, unsalted tops",
+      "graham crackers":"Crackers, graham, plain or honey",
+      "popcorn":"Popcorn, air-popped","pretzels":"Pretzels, hard, plain, salted",
+      "pancake mix":"Pancakes, plain, dry mix, complete",
+      "cornbread mix":"Bread, cornbread, dry mix, enriched",
+      "mac and cheese":"Macaroni, dry, unenriched",
       "boxed mac and cheese":"Macaroni, dry, unenriched",
       "instant mac and cheese":"Macaroni, dry, unenriched",
       "instant mashed potatoes":"Potatoes, mashed, dehydrated, flakes without milk, dry form",
-
-      // Produce — Vegetables
-      "broccoli":           "Broccoli, raw",
-      "spinach":            "Spinach, raw",
-      "kale":               "Kale, raw",
-      "lettuce":            "Lettuce, iceberg (includes crisphead types), raw",
-      "romaine":            "Lettuce, cos or romaine, raw",
-      "cabbage":            "Cabbage, raw",
-      "carrots":            "Carrots, raw",
-      "carrot":             "Carrots, raw",
-      "celery":             "Celery, raw",
-      "onion":              "Onions, raw",
-      "onions":             "Onions, raw",
-      "garlic":             "Garlic, raw",
-      "tomato":             "Tomatoes, red, ripe, raw, year round average",
-      "tomatoes":           "Tomatoes, red, ripe, raw, year round average",
-      "canned tomato":      "Tomatoes, red, ripe, canned, packed in tomato juice",
-      "canned tomatoes":    "Tomatoes, red, ripe, canned, packed in tomato juice",
-      "tomato sauce":       "Sauce, tomato, canned",
-      "potato":             "Potatoes, flesh and skin, raw",
-      "potatoes":           "Potatoes, flesh and skin, raw",
-      "sweet potato":       "Sweet potato, raw, unprepared",
-      "sweet potatoes":     "Sweet potato, raw, unprepared",
-      "corn":               "Corn, sweet, yellow, raw",
-      "frozen corn":        "Corn, sweet, yellow, frozen, kernels cut off cob",
-      "peas":               "Peas, green, raw",
-      "frozen peas":        "Peas, green, frozen",
-      "green beans":        "Beans, snap, green, raw",
-      "frozen green beans": "Beans, snap, green, frozen, all styles",
-      "zucchini":           "Squash, summer, zucchini, includes skin, raw",
-      "cucumber":           "Cucumber, with peel, raw",
-      "bell pepper":        "Peppers, sweet, red, raw",
-      "pepper":             "Peppers, sweet, green, raw",
-      "mushrooms":          "Mushrooms, white, raw",
-      "cauliflower":        "Cauliflower, raw",
-      "frozen broccoli":    "Broccoli, frozen, chopped",
-      "frozen spinach":     "Spinach, frozen, chopped or leaf",
-      "frozen vegetables":  "Vegetables, mixed, frozen",
-
-      // Produce — Fruit
-      "apple":              "Apples, raw, with skin",
-      "apples":             "Apples, raw, with skin",
-      "banana":             "Bananas, raw",
-      "bananas":            "Bananas, raw",
-      "orange":             "Oranges, raw, all commercial varieties",
-      "oranges":            "Oranges, raw, all commercial varieties",
-      "grapes":             "Grapes, red or green (European type), raw",
-      "strawberries":       "Strawberries, raw",
-      "blueberries":        "Blueberries, raw",
-      "frozen berries":     "Blueberries, frozen, unsweetened",
-      "watermelon":         "Watermelon, raw",
-      "peach":              "Peaches, raw",
-      "peaches":            "Peaches, raw",
-      "pear":               "Pears, raw",
-      "raisins":            "Raisins, seedless",
-      "canned peaches":     "Peaches, canned, juice pack, solids and liquids",
-      "canned pineapple":   "Pineapple, canned, juice pack, solids and liquids",
-      "applesauce":         "Applesauce, canned, unsweetened, without added ascorbic acid",
-      "lemon":              "Lemons, raw, without peel",
-      "lime":               "Limes, raw",
-
+      // Vegetables
+      "broccoli":"Broccoli, raw","spinach":"Spinach, raw","kale":"Kale, raw",
+      "lettuce":"Lettuce, iceberg (includes crisphead types), raw",
+      "romaine":"Lettuce, cos or romaine, raw","cabbage":"Cabbage, raw",
+      "carrots":"Carrots, raw","carrot":"Carrots, raw","celery":"Celery, raw",
+      "onion":"Onions, raw","onions":"Onions, raw","garlic":"Garlic, raw",
+      "tomato":"Tomatoes, red, ripe, raw, year round average",
+      "tomatoes":"Tomatoes, red, ripe, raw, year round average",
+      "canned tomato":"Tomatoes, red, ripe, canned, packed in tomato juice",
+      "canned tomatoes":"Tomatoes, red, ripe, canned, packed in tomato juice",
+      "tomato sauce":"Sauce, tomato, canned",
+      "potato":"Potatoes, flesh and skin, raw","potatoes":"Potatoes, flesh and skin, raw",
+      "sweet potato":"Sweet potato, raw, unprepared",
+      "sweet potatoes":"Sweet potato, raw, unprepared",
+      "corn":"Corn, sweet, yellow, raw","frozen corn":"Corn, sweet, yellow, frozen, kernels cut off cob",
+      "peas":"Peas, green, raw","frozen peas":"Peas, green, frozen",
+      "green beans":"Beans, snap, green, raw",
+      "frozen green beans":"Beans, snap, green, frozen, all styles",
+      "zucchini":"Squash, summer, zucchini, includes skin, raw",
+      "cucumber":"Cucumber, with peel, raw",
+      "bell pepper":"Peppers, sweet, red, raw","pepper":"Peppers, sweet, green, raw",
+      "mushrooms":"Mushrooms, white, raw","cauliflower":"Cauliflower, raw",
+      "frozen broccoli":"Broccoli, frozen, chopped",
+      "frozen spinach":"Spinach, frozen, chopped or leaf",
+      "frozen vegetables":"Vegetables, mixed, frozen",
+      // Fruit
+      "apple":"Apples, raw, with skin","apples":"Apples, raw, with skin",
+      "banana":"Bananas, raw","bananas":"Bananas, raw",
+      "orange":"Oranges, raw, all commercial varieties",
+      "oranges":"Oranges, raw, all commercial varieties",
+      "grapes":"Grapes, red or green (European type), raw",
+      "strawberries":"Strawberries, raw","blueberries":"Blueberries, raw",
+      "frozen berries":"Blueberries, frozen, unsweetened",
+      "watermelon":"Watermelon, raw","peach":"Peaches, raw","peaches":"Peaches, raw",
+      "pear":"Pears, raw","raisins":"Raisins, seedless",
+      "canned peaches":"Peaches, canned, juice pack, solids and liquids",
+      "canned pineapple":"Pineapple, canned, juice pack, solids and liquids",
+      "applesauce":"Applesauce, canned, unsweetened, without added ascorbic acid",
+      "lemon":"Lemons, raw, without peel","lime":"Limes, raw",
       // Canned & Pantry
-      "chicken broth":      "Soup, chicken broth, canned, ready-to-serve",
-      "vegetable broth":    "Soup, vegetable broth, ready-to-serve",
-      "tomato soup":        "Soup, tomato, canned, condensed",
+      "chicken broth":"Soup, chicken broth, canned, ready-to-serve",
+      "vegetable broth":"Soup, vegetable broth, ready-to-serve",
+      "tomato soup":"Soup, tomato, canned, condensed",
       "chicken noodle soup":"Soup, chicken noodle, canned, condensed",
-      "canned chili":       "Soup, chili beef, canned, condensed",
-      "beef stew":          "Soup, beef and vegetables, canned, ready-to-serve",
-      "canned beef stew":   "Soup, beef and vegetables, canned, ready-to-serve",
-      "canned corn":        "Corn, sweet, yellow, canned, whole kernel, drained solids",
-      "canned peas":        "Peas, green, canned, drained solids",
-      "vegetable oil":      "Oil, vegetable, palm",
-      "canola oil":         "Oil, canola",
-      "cooking spray":      "Oil, vegetable, natreon canola, high stability, non trans",
-      "mayonnaise":         "Mayonnaise dressing, no cholesterol",
-      "ketchup":            "Catsup",
-      "mustard":            "Mustard, yellow, prepared, yellow",
-      "hot sauce":          "Sauce, hot chile, chili, ready-to-serve",
-      "sugar":              "Sugars, granulated",
-      "brown sugar":        "Sugars, brown",
-      "honey":              "Honey",
-      "vegetable shortening":"Shortening, vegetable, household",
-      "lard":               "Lard",
-      "salsa":              "Sauce, salsa, ready-to-serve",
-
-      // Frozen meals & convenience
-      "frozen pizza":       "Pizza, cheese topping, regular crust, frozen, baked",
-      "frozen chicken":     "Chicken, broilers or fryers, meat only, raw",
-      "frozen fries":       "Potatoes, french fried, all types, salt added in processing, frozen",
-      "frozen burritos":    "Burritos, bean and cheese, frozen",
-      "frozen pot pie":     "Pie, chicken pot pie, frozen entree",
-      "chicken pot pie":    "Pie, chicken pot pie, frozen entree",
-
+      "canned chili":"Soup, chili beef, canned, condensed",
+      "beef stew":"Soup, beef and vegetables, canned, ready-to-serve",
+      "canned beef stew":"Soup, beef and vegetables, canned, ready-to-serve",
+      "canned corn":"Corn, sweet, yellow, canned, whole kernel, drained solids",
+      "canned peas":"Peas, green, canned, drained solids",
+      "vegetable oil":"Oil, vegetable, palm","canola oil":"Oil, canola",
+      "cooking spray":"Oil, vegetable, natreon canola, high stability, non trans",
+      "mayonnaise":"Mayonnaise dressing, no cholesterol","ketchup":"Catsup",
+      "mustard":"Mustard, yellow, prepared, yellow",
+      "hot sauce":"Sauce, hot chile, chili, ready-to-serve",
+      "sugar":"Sugars, granulated","brown sugar":"Sugars, brown","honey":"Honey",
+      "vegetable shortening":"Shortening, vegetable, household","lard":"Lard",
+      "salsa":"Sauce, salsa, ready-to-serve",
+      // Frozen & convenience
+      "frozen pizza":"Pizza, cheese topping, regular crust, frozen, baked",
+      "frozen chicken":"Chicken, broilers or fryers, meat only, raw",
+      "frozen fries":"Potatoes, french fried, all types, salt added in processing, frozen",
+      "frozen burritos":"Burritos, bean and cheese, frozen",
+      "frozen pot pie":"Pie, chicken pot pie, frozen entree",
+      "chicken pot pie":"Pie, chicken pot pie, frozen entree",
       // Beverages
-      "orange juice":       "Orange juice, raw",
-      "apple juice":        "Apple juice, canned or bottled, unsweetened, without added ascorbic acid",
-      "coffee":             "Beverages, coffee, brewed, prepared with tap water",
-      "tea":                "Tea, brewed, prepared with tap water",
+      "orange juice":"Orange juice, raw",
+      "apple juice":"Apple juice, canned or bottled, unsweetened, without added ascorbic acid",
+      "coffee":"Beverages, coffee, brewed, prepared with tap water",
+      "tea":"Tea, brewed, prepared with tap water",
     };
 
     const STOP_WORDS = new Set(["fresh","organic","large","small","plain","original","store","brand"]);
@@ -762,16 +714,13 @@
         return () => document.removeEventListener("mousedown", h);
       }, []);
 
-      // Filter toggle: "all" | "generic" | "branded" | "off"
       const [filterTier, setFilterTier] = useState("all");
-      // Hint panel open by default; students can collapse it
       const [hintOpen,   setHintOpen]   = useState(true);
 
       const est    = selectedFood && parseFloat(qty) > 0 ? calcServings(selectedFood, parseFloat(qty), unit) : null;
       const cpp    = est && parseFloat(price) > 0 ? (parseFloat(price)/est).toFixed(2) : null;
       const canAdd = !!(selectedFood && parseFloat(qty) > 0 && parseFloat(price) > 0);
 
-      // Client-side filter applied on top of the already-tiered searchResults
       const visibleResults = filterTier === "all"
         ? searchResults
         : searchResults.filter(f => {
@@ -787,36 +736,38 @@
       ];
 
       const FILTER_INFO = {
-        generic: {
+        generic:{
           heading:"🌿 Generic Foods — best for nutrition data",
-          body:"Use this first. Search food categories rather than brands: \"chicken breast,\" \"brown rice,\" or \"apple.\" Generic entries are lab-analyzed and report 40+ nutrients including vitamins and minerals — essential for a complete nutritional picture.",
+          body:"Use this first. Search food categories not brands: \"chicken breast,\" \"brown rice,\" \"apple.\" Generic entries are lab-analyzed with 40+ nutrients including vitamins and minerals — essential for a complete nutritional picture.",
         },
-        branded: {
+        branded:{
           heading:"🏷️ Branded Products — best for specific products",
           body:"Use this when the brand matters — e.g., \"Dave's Killer Bread\" or \"Kirkland canned tuna.\" Branded entries match real store products but usually only report macronutrients. Vitamins and minerals are often missing.",
         },
-        off: {
+        off:{
           heading:"📦 Open Food Facts — best for store brands and regional products",
-          body:"Use this as a last resort when a product isn't in the USDA database — store brands, regional products, or international items. Nutrient coverage varies widely. Treat micronutrient data from this source as approximate.",
+          body:"Use this when a product isn't in the USDA database — store brands, regional items, or international products. Nutrient coverage varies widely. Treat micronutrient data from this source as approximate.",
         },
       };
 
       const TIER_META = {
-        generic: { icon:"🌿", label:"Generic Foods",    sub:"complete nutrient data", badgeColor:"#2A5F3A", badgeBg:"#D5EDDF" },
-        branded: { icon:"🏷️",  label:"Branded Products", sub:"USDA database",          badgeColor:"#8A6040", badgeBg:"#F4EFE6" },
-        off:     { icon:"📦", label:"Open Food Facts",  sub:"packaged products",       badgeColor:"#2A6B3A", badgeBg:"#DDF0E5" },
+        generic:{ icon:"🌿", label:"Generic Foods",    sub:"complete nutrient data", badgeColor:"#2A5F3A", badgeBg:"#D5EDDF" },
+        branded:{ icon:"🏷️",  label:"Branded Products", sub:"USDA database",          badgeColor:"#8A6040", badgeBg:"#F4EFE6" },
+        off:    { icon:"📦", label:"Open Food Facts",  sub:"packaged products",       badgeColor:"#2A6B3A", badgeBg:"#DDF0E5" },
       };
 
-      const renderFoodRow = (food) => {
+      const renderFoodRow = food => {
         const tier = food.tier || (food.source === "off" ? "off" : "branded");
         const tm   = TIER_META[tier] || TIER_META.branded;
         return (
           <div key={food.fdcId} className="result-row" onClick={() => selectFood(food)}
             style={{padding:"9px 12px",borderBottom:"1px solid #F0EAE0",
-              background: food._pinned ? "#F0F7F2" : "white"}}>
+              background:food._pinned?"#F0F7F2":"white"}}>
             {food._pinned && (
-              <div style={{fontSize:9,fontWeight:700,color:"#2A5F3A",letterSpacing:".8px",
-                textTransform:"uppercase",marginBottom:2}}>⭐ Best match</div>
+              <div style={{fontSize:9,fontWeight:700,color:"#2A5F3A",
+                letterSpacing:".8px",textTransform:"uppercase",marginBottom:2}}>
+                ⭐ Best match
+              </div>
             )}
             <div style={{fontSize:13,fontWeight:600,color:"var(--tx)",lineHeight:1.3}}>
               {food.description}
@@ -851,7 +802,7 @@
               Generic entries have the most complete nutrient data; branded entries match what's on store shelves.
             </p>
 
-            {/* ── Hint panel ── */}
+            {/* Hint panel */}
             <div style={{background:"#F5F0E8",borderRadius:8,marginBottom:14,
               overflow:"hidden",border:"1px solid var(--bd)"}}>
               <button onClick={() => setHintOpen(o => !o)}
@@ -870,14 +821,13 @@
                 <div style={{padding:"0 11px 11px",fontSize:11,color:"#5A4535",lineHeight:1.65}}>
                   <div style={{marginBottom:7}}>
                     <strong>1. Start with 🌿 Generic.</strong> Search the food category, not the
-                    brand (e.g., <em>"bread," "chicken breast," "whole milk"</em>). You'll get the
-                    most complete nutritional data for your reflection.
+                    brand — <em>"bread," "chicken breast," "whole milk."</em> You'll get the most
+                    complete nutritional data for your reflection.
                   </div>
                   <div style={{marginBottom:7}}>
-                    <strong>2. Switch to 🏷️ Branded if it matters.</strong> If the specific brand
-                    has a meaningfully different profile — whole grain vs. white bread,
-                    2% vs. whole milk — search for it by name. You'll get accurate macros
-                    but may lose vitamin and mineral data.
+                    <strong>2. Switch to 🏷️ Branded if it matters.</strong> If your specific brand
+                    differs meaningfully — whole grain vs. white bread, 2% vs. whole milk — search
+                    by name. You'll get accurate macros but may lose vitamin and mineral data.
                   </div>
                   <div>
                     <strong>3. Try 📦 Open Food Facts as a last resort.</strong> If your exact
@@ -888,7 +838,7 @@
               )}
             </div>
 
-            {/* ── Filter toggle ── */}
+            {/* Filter toggle */}
             <div style={{display:"flex",gap:3,background:"#EDE7DC",borderRadius:9,
               padding:3,marginBottom:8,flexWrap:"wrap"}}>
               {FILTER_OPTS.map(o => (
@@ -897,7 +847,7 @@
                     background:filterTier===o.v?"var(--card)":"transparent",
                     color:filterTier===o.v?"var(--tx)":"var(--mu)",
                     boxShadow:filterTier===o.v?"0 1px 4px rgba(24,10,0,.1)":"none",
-                    fontSize:11,padding:"5px 8px",whiteSpace:"nowrap"}}>
+                    fontSize:11,padding:"5px 6px",whiteSpace:"nowrap"}}>
                   {o.l}
                 </button>
               ))}
@@ -907,14 +857,12 @@
             {filterTier !== "all" && FILTER_INFO[filterTier] && (
               <div style={{background:"#F5F0E8",borderRadius:7,padding:"8px 11px",
                 marginBottom:12,fontSize:11,color:"#5A4535",lineHeight:1.6}}>
-                <div style={{fontWeight:700,marginBottom:3}}>
-                  {FILTER_INFO[filterTier].heading}
-                </div>
+                <div style={{fontWeight:700,marginBottom:3}}>{FILTER_INFO[filterTier].heading}</div>
                 {FILTER_INFO[filterTier].body}
               </div>
             )}
 
-            {/* ── Search input ── */}
+            {/* Search input + dropdown */}
             <div ref={dropRef} style={{position:"relative",marginBottom:12}}>
               <label style={{fontSize:11,fontWeight:700,color:"var(--mu)",display:"block",
                 marginBottom:4,textTransform:"uppercase",letterSpacing:".5px"}}>Search Food</label>
@@ -935,16 +883,14 @@
                 </span>
               </div>
 
-              {/* ── Dropdown ── */}
+              {/* Dropdown */}
               {showDropdown && visibleResults.length > 0 && (
                 <div style={{position:"absolute",top:"calc(100% + 3px)",left:0,right:0,
                   background:"white",border:"1.5px solid var(--bd)",borderRadius:8,
-                  boxShadow:"0 4px 22px rgba(24,10,0,.12)",zIndex:200,
-                  maxHeight:340,overflowY:"auto"}}>
+                  boxShadow:"0 4px 22px rgba(24,10,0,.12)",zIndex:200,maxHeight:340,overflowY:"auto"}}>
                   {filterTier !== "all"
                     ? visibleResults.map(renderFoodRow)
                     : (() => {
-                        // Group by tier for section dividers on "All" view
                         const groups = visibleResults.reduce((acc, food) => {
                           const tier = food.tier || (food.source==="off" ? "off" : "branded");
                           const last = acc[acc.length-1];
@@ -977,8 +923,8 @@
                               <div style={{padding:"8px 12px",background:"var(--ali)",
                                 borderTop:"1px solid #EDD8A0",fontSize:11,
                                 color:"#7A5600",lineHeight:1.55}}>
-                                💡 No generic match found — for better nutrient data, try a
-                                simpler term like <em>"bread"</em> or <em>"whole milk."</em>
+                                💡 No generic match found — try a simpler term
+                                like <em>"bread"</em> or <em>"whole milk."</em>
                               </div>
                             )}
                           </>
@@ -988,7 +934,7 @@
                 </div>
               )}
 
-              {/* No results for this filter */}
+              {/* No results for active filter */}
               {showDropdown && searchResults.length > 0 && visibleResults.length === 0 && (
                 <div style={{position:"absolute",top:"calc(100% + 3px)",left:0,right:0,
                   background:"white",border:"1.5px solid var(--bd)",borderRadius:8,
@@ -1669,11 +1615,13 @@
       const overBudget  = activePlan === "thrifty" && totalSpent > budgetLimit;
       const hasSaved    = !!(saved && (saved.thrifty.items.length > 0 || saved.preferred.items.length > 0));
 
-      // ── Search: three parallel calls + lookup table boost ───────────────
-      // A single unfiltered USDA call buries Foundation/SR Legacy results under
-      // ~400k branded entries. Three explicit dataType calls guarantee each tier
-      // gets representation. The FOOD_LOOKUP table pins the obvious generic match
-      // to the top when a student searches a common term like "milk" or "bread".
+      // ── Search: three parallel calls + lookup table + conditional OFF ───
+      // Three explicit dataType calls guarantee each tier gets representation.
+      // FOOD_LOOKUP pins the obvious generic match to the top.
+      // OFF is skipped when lookup fires AND USDA generic returns ≥3 results —
+      // this prevents noisy branded results (e.g., 40 milk variants) swamping
+      // good generic matches for common foods. OFF still fires when the student
+      // explicitly selects the 📦 filter or when generic results are sparse.
       useEffect(() => {
         const query = searchQuery.trim();
         if (!query || query.length < 2) {
@@ -1684,25 +1632,21 @@
         debRef.current = setTimeout(async () => {
           setSearching(true);
           try {
-            const q           = encodeURIComponent(query);
-            const lookupTerm  = FOOD_LOOKUP[query.toLowerCase()];
-            const lookupQ     = lookupTerm ? encodeURIComponent(lookupTerm) : null;
+            const q          = encodeURIComponent(query);
+            const lookupTerm = FOOD_LOOKUP[query.toLowerCase()];
+            const lookupQ    = lookupTerm ? encodeURIComponent(lookupTerm) : null;
 
-            // Build fetch array — lookup call fires in parallel when a match exists
-            const fetches = [
+            // Always fire USDA generic + branded + optional lookup in parallel.
+            // OFF fires conditionally after we see how many generic results we get.
+            const [genericRes, brandedRes, lookupRes] = await Promise.all([
               fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${q}&dataType=Foundation,SR%20Legacy&pageSize=12&api_key=${USDA_KEY}`),
               fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${q}&dataType=Branded%20Food&pageSize=12&api_key=${USDA_KEY}`),
-              fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${q}&search_simple=1&action=process&json=1&page_size=10&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`),
               lookupQ
                 ? fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${lookupQ}&dataType=Foundation,SR%20Legacy&pageSize=4&api_key=${USDA_KEY}`)
                 : Promise.resolve(null),
-            ];
-
-            const [genericRes, brandedRes, offRes, lookupRes] = await Promise.all(fetches);
-            const [genericData, brandedData, offData, lookupData] = await Promise.all([
-              genericRes.json(),
-              brandedRes.json(),
-              offRes.json(),
+            ]);
+            const [genericData, brandedData, lookupData] = await Promise.all([
+              genericRes.json(), brandedRes.json(),
               lookupRes ? lookupRes.json() : Promise.resolve(null),
             ]);
 
@@ -1717,10 +1661,9 @@
               return score;
             };
 
-            // Lookup results are pinned to top of generic tier with a boosted flag
+            // Pinned lookup results (score=999 so they always lead the generic tier)
             const lookupFoods = lookupData
-              ? (lookupData.foods || [])
-                  .slice(0, 2)
+              ? (lookupData.foods || []).slice(0, 2)
                   .map(f => ({ ...normalizeUSDAFood(f), tier:"generic", _pinned:true, _score:999 }))
               : [];
 
@@ -1736,21 +1679,27 @@
               .sort((a, b) => b._score - a._score)
               .slice(0, 8);
 
-            const offFoods = (offData.products || [])
-              .filter(filterOFFProduct)
-              .map(p => ({ ...normalizeOFF(p), tier:"off" }))
-              .map(f => ({ ...f, _score: scoreFood(f) }))
-              .sort((a, b) => b._score - a._score)
-              .slice(0, 8);
+            // Conditional OFF: skip when lookup hit AND generic has ≥3 results.
+            // This avoids noise for common staples (milk, bread, eggs, etc.) while
+            // still fetching OFF for obscure or branded-only products.
+            const totalGeneric = dedupeFoods([...lookupFoods, ...genericFoods]).length;
+            const skipOFF      = lookupTerm && totalGeneric >= 3;
 
-            // Merge: pinned lookup items first, then regular generic, branded, OFF.
-            // dedupeFoods removes duplicates so lookup items don't appear twice.
-            const merged = dedupeFoods([
-              ...lookupFoods,
-              ...genericFoods,
-              ...brandedFoods,
-              ...offFoods,
-            ]);
+            let offFoods = [];
+            if (!skipOFF) {
+              try {
+                const offRes  = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${q}&search_simple=1&action=process&json=1&page_size=10&fields=id,code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments`);
+                const offData = await offRes.json();
+                offFoods = (offData.products || [])
+                  .filter(filterOFFProduct)
+                  .map(p => ({ ...normalizeOFF(p), tier:"off" }))
+                  .map(f => ({ ...f, _score: scoreFood(f) }))
+                  .sort((a, b) => b._score - a._score)
+                  .slice(0, 8);
+              } catch(e) { /* OFF is optional — silent fail is fine */ }
+            }
+
+            const merged = dedupeFoods([...lookupFoods, ...genericFoods, ...brandedFoods, ...offFoods]);
             setSearchResults(merged);
             setShowDropdown(merged.length > 0);
           } catch(e) {
